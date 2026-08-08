@@ -35,6 +35,9 @@ import app.talevane.reader.R
 import app.talevane.reader.chapters.BookChapter
 import app.talevane.reader.chapters.ChapterDetector
 import app.talevane.reader.data.*
+import app.talevane.reader.library.BookPresenter
+import app.talevane.reader.mood.MoodEngine
+import app.talevane.reader.mood.MoodSnapshot
 import app.talevane.reader.speech.NarrationClient
 import app.talevane.reader.speech.NarrationService
 import kotlinx.coroutines.delay
@@ -62,11 +65,16 @@ fun TalevaneRoot(repository: BookRepository) {
     }
 }
 
+private fun progressOf(book: BookEntity): Float =
+    if (book.content.isBlank()) 0f else (book.progressChars.toFloat() / book.content.length).coerceIn(0f, 1f)
+
 @Composable
 private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) {
     val books by repository.books.collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
     var error by remember { mutableStateOf<String?>(null) }
+    val continueBook = books.firstOrNull { progressOf(it) in 0.001f..0.979f }
+
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) scope.launch {
             runCatching { repository.import(uri) }
@@ -77,11 +85,17 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
 
     Scaffold(
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = { picker.launch(arrayOf("text/plain", "application/pdf", "application/epub+zip")) },
-                icon = { Icon(Icons.Default.Add, null) },
-                text = { Text("Añadir libro") }
-            )
+            if (books.isEmpty()) {
+                ExtendedFloatingActionButton(
+                    onClick = { picker.launch(arrayOf("text/plain", "application/pdf", "application/epub+zip")) },
+                    icon = { Icon(Icons.Default.Add, null) },
+                    text = { Text("Añadir libro") }
+                )
+            } else {
+                FloatingActionButton(
+                    onClick = { picker.launch(arrayOf("text/plain", "application/pdf", "application/epub+zip")) }
+                ) { Icon(Icons.Default.Add, "Añadir libro") }
+            }
         }
     ) { padding ->
         LazyColumn(
@@ -107,7 +121,7 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
                         Row(verticalAlignment = Alignment.Bottom) {
                             Text("Talevane", style = MaterialTheme.typography.headlineLarge)
                             Spacer(Modifier.width(8.dp))
-                            Text("v0.4", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            Text("v0.5", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                         }
                         Text("Tus historias, llevadas a la vida.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -141,7 +155,12 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
                     }
                 }
             } else {
+                continueBook?.let { book ->
+                    item { ContinueReadingCard(book) { openBook(book.id) } }
+                }
+
                 item {
+                    Spacer(Modifier.height(4.dp))
                     Text("Tu biblioteca", style = MaterialTheme.typography.titleLarge)
                     Text(
                         if (books.size == 1) "1 libro" else "${books.size} libros",
@@ -157,9 +176,44 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
 }
 
 @Composable
-private fun BookRow(book: BookEntity, onClick: () -> Unit) {
-    val percent = if (book.content.isBlank()) 0f else (book.progressChars.toFloat() / book.content.length).coerceIn(0f, 1f)
+private fun ContinueReadingCard(book: BookEntity, onClick: () -> Unit) {
+    val display = remember(book.title, book.author) { BookPresenter.present(book) }
+    val percent = progressOf(book)
     val percentLabel = (percent * 100).roundToInt()
+
+    ElevatedCard(Modifier.fillMaxWidth().clickable(onClick = onClick)) {
+        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(
+                modifier = Modifier.size(52.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.primaryContainer
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.PlayArrow, "Continuar", tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Continuar", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text(display.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("$percentLabel% leído · ${display.author}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Icon(Icons.Default.ChevronRight, null)
+        }
+    }
+}
+
+@Composable
+private fun BookRow(book: BookEntity, onClick: () -> Unit) {
+    val display = remember(book.title, book.author) { BookPresenter.present(book) }
+    val percent = progressOf(book)
+    val percentLabel = (percent * 100).roundToInt()
+    val status = when {
+        percent >= 0.98f -> "Terminado"
+        percentLabel == 0 -> "Sin empezar"
+        else -> "$percentLabel% leído"
+    }
+
     Card(Modifier.fillMaxWidth().clickable(onClick = onClick)) {
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Surface(
@@ -169,7 +223,7 @@ private fun BookRow(book: BookEntity, onClick: () -> Unit) {
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Text(
-                        book.title.firstOrNull()?.uppercase() ?: "T",
+                        display.title.firstOrNull()?.uppercase() ?: "T",
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -180,7 +234,7 @@ private fun BookRow(book: BookEntity, onClick: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        book.title,
+                        display.title,
                         style = MaterialTheme.typography.titleMedium,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
@@ -193,7 +247,7 @@ private fun BookRow(book: BookEntity, onClick: () -> Unit) {
                 }
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    book.author,
+                    display.author,
                     style = MaterialTheme.typography.bodySmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -203,11 +257,7 @@ private fun BookRow(book: BookEntity, onClick: () -> Unit) {
                 LinearProgressIndicator(progress = { percent }, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(5.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(
-                        if (percentLabel == 0) "Sin empezar" else "$percentLabel% leído",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Text(status, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(book.format, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                 }
             }
@@ -230,7 +280,7 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
     val current = book ?: return Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
         CircularProgressIndicator()
     }
-
+    val display = remember(current.title, current.author) { BookPresenter.present(current) }
     val chapters = remember(current.content) { ChapterDetector.detect(current.content) }
     var narrationState by remember(current.id) { mutableStateOf(NarrationUiState(position = current.progressChars)) }
     var manualPosition by remember(current.id) { mutableIntStateOf(current.progressChars) }
@@ -265,9 +315,7 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
         )
         NarrationClient.query(context)
 
-        onDispose {
-            runCatching { context.unregisterReceiver(receiver) }
-        }
+        onDispose { runCatching { context.unregisterReceiver(receiver) } }
     }
 
     val activeBook = narrationState.bookId == current.id
@@ -307,13 +355,18 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
 
     val measured = scroll.maxValue != Int.MAX_VALUE
     val activePosition = if (isSpeaking) narrationState.position else manualPosition
-    val readingPercent = when {
-        current.content.isBlank() -> 0f
-        current.content.isNotBlank() -> (activePosition.toFloat() / current.content.length).coerceIn(0f, 1f)
-        else -> 0f
-    }
+    val readingPercent = if (current.content.isBlank()) 0f else
+        (activePosition.toFloat() / current.content.length).coerceIn(0f, 1f)
     val percentLabel = (readingPercent * 100).roundToInt()
     val currentChapter = chapters.lastOrNull { it.start <= activePosition } ?: chapters.firstOrNull()
+
+    var moodSnapshot by remember(current.id) {
+        mutableStateOf(MoodEngine.analyze(current.content, current.progressChars))
+    }
+    val moodBucket = activePosition / 900
+    LaunchedEffect(current.id, moodBucket) {
+        moodSnapshot = MoodEngine.analyze(current.content, activePosition, moodSnapshot.mood)
+    }
 
     fun positionFromScroll(): Int {
         return if (restored && measured && scroll.maxValue > 0 && current.content.isNotBlank()) {
@@ -333,9 +386,7 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
             }
             repository.saveProgress(current.id, position)
         }
-        if (isSpeaking) {
-            NarrationClient.start(context, current.id, position, speechRate)
-        }
+        if (isSpeaking) NarrationClient.start(context, current.id, position, speechRate)
         showChapters = false
     }
 
@@ -343,11 +394,7 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
         ModalBottomSheet(onDismissRequest = { showChapters = false }) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
                 Text("Capítulos", style = MaterialTheme.typography.headlineSmall)
-                Text(
-                    "${chapters.size} secciones detectadas",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Text("${chapters.size} secciones detectadas", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(12.dp))
                 LazyColumn(Modifier.fillMaxWidth().heightIn(max = 520.dp)) {
                     items(chapters, key = { it.start }) { chapter ->
@@ -371,9 +418,9 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
             TopAppBar(
                 title = {
                     Column {
-                        Text(current.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(display.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
-                            currentChapter?.title ?: current.author,
+                            currentChapter?.title ?: display.author,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -381,13 +428,9 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                         )
                     }
                 },
-                navigationIcon = {
-                    IconButton(onClick = back) { Icon(Icons.Default.ArrowBack, "Volver") }
-                },
+                navigationIcon = { IconButton(onClick = back) { Icon(Icons.Default.ArrowBack, "Volver") } },
                 actions = {
-                    IconButton(onClick = { showChapters = true }) {
-                        Icon(Icons.Default.List, "Capítulos")
-                    }
+                    IconButton(onClick = { showChapters = true }) { Icon(Icons.Default.List, "Capítulos") }
                     IconButton(onClick = {
                         scope.launch {
                             repository.toggleBookmark(current)
@@ -408,20 +451,14 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                     LinearProgressIndicator(progress = { readingPercent }, modifier = Modifier.fillMaxWidth())
 
                     speechError?.let { error ->
-                        Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.ErrorOutline, null, tint = MaterialTheme.colorScheme.error)
                             Spacer(Modifier.width(8.dp))
                             Text(error, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                         }
                     }
 
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         FilledTonalIconButton(
                             enabled = current.content.isNotBlank(),
                             onClick = {
@@ -434,10 +471,7 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                                 }
                             }
                         ) {
-                            Icon(
-                                if (isSpeaking) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                if (isSpeaking) "Pausar narración" else "Escuchar libro"
-                            )
+                            Icon(if (isSpeaking) Icons.Default.Pause else Icons.Default.PlayArrow, if (isSpeaking) "Pausar narración" else "Escuchar libro")
                         }
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
@@ -450,24 +484,19 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                                 style = MaterialTheme.typography.labelLarge
                             )
                             Text(
-                                currentChapter?.title ?: "Voz del dispositivo",
+                                "Ambiente · ${moodSnapshot.mood.label}",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = MaterialTheme.colorScheme.primary,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
                         if (activeBook) {
-                            IconButton(onClick = { NarrationClient.stop(context) }) {
-                                Icon(Icons.Default.Stop, "Detener narración")
-                            }
+                            IconButton(onClick = { NarrationClient.stop(context) }) { Icon(Icons.Default.Stop, "Detener narración") }
                         }
                     }
 
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = {
                             speechRate = (speechRate - 0.1f).coerceAtLeast(0.6f)
                             if (activeBook) NarrationClient.setRate(context, speechRate)
@@ -482,13 +511,10 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                     }
 
                     HorizontalDivider()
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         TextButton(onClick = { fontSize = (fontSize - 1).coerceAtLeast(14f) }) { Text("A−") }
                         Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(current.author, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(display.author, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text("${fontSize.toInt()} sp", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         TextButton(onClick = { fontSize = (fontSize + 1).coerceAtMost(34f) }) { Text("A+") }
@@ -500,10 +526,12 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
         Column(
             Modifier.fillMaxSize().padding(padding).verticalScroll(scroll).padding(horizontal = 24.dp, vertical = 20.dp)
         ) {
-            Text(current.title, style = MaterialTheme.typography.headlineMedium, fontFamily = FontFamily.Serif)
+            Text(display.title, style = MaterialTheme.typography.headlineMedium, fontFamily = FontFamily.Serif)
             Spacer(Modifier.height(6.dp))
-            Text(current.author, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(24.dp))
+            Text(display.author, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(14.dp))
+            MoodCard(moodSnapshot)
+            Spacer(Modifier.height(22.dp))
             Text(
                 current.content.ifBlank { "No se pudo extraer texto legible de este archivo." },
                 fontSize = fontSize.sp,
@@ -511,6 +539,25 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                 fontFamily = FontFamily.Serif
             )
             Spacer(Modifier.height(80.dp))
+        }
+    }
+}
+
+@Composable
+private fun MoodCard(snapshot: MoodSnapshot) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer
+    ) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.AutoAwesome, null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Ambiente · ${snapshot.mood.label}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                Text(snapshot.mood.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.75f))
+            }
+            Text("${snapshot.intensityPercent}%", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSecondaryContainer)
         }
     }
 }
