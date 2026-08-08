@@ -39,8 +39,12 @@ import app.talevane.reader.library.BookPresenter
 import app.talevane.reader.mood.MoodEngine
 import app.talevane.reader.mood.MoodSnapshot
 import app.talevane.reader.mood.ReadingMood
+import app.talevane.reader.reading.ReadingPositionResolver
+import app.talevane.reader.speech.AuthorVoiceProfile
 import app.talevane.reader.speech.NarrationClient
 import app.talevane.reader.speech.NarrationService
+import app.talevane.reader.speech.VoiceMode
+import app.talevane.reader.speech.VoicePreferenceStore
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -126,7 +130,7 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
                         Row(verticalAlignment = Alignment.Bottom) {
                             Text("Talevane", style = MaterialTheme.typography.headlineLarge)
                             Spacer(Modifier.width(8.dp))
-                            Text("v0.6", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            Text("v0.6.1", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                         }
                         Text("Tus historias, llevadas a la vida.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -279,6 +283,7 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
     var fontSize by rememberSaveable { mutableStateOf(19f) }
     var restored by remember(bookId) { mutableStateOf(false) }
     var showChapters by rememberSaveable { mutableStateOf(false) }
+    var showVoiceMenu by rememberSaveable { mutableStateOf(false) }
     val scroll = rememberScrollState()
 
     LaunchedEffect(bookId) { book = repository.get(bookId) }
@@ -287,10 +292,14 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
     }
     val display = remember(current.title, current.author) { BookPresenter.present(current) }
     val chapters = remember(current.content) { ChapterDetector.detect(current.content) }
-    var narrationState by remember(current.id) { mutableStateOf(NarrationUiState(position = current.progressChars)) }
-    var manualPosition by remember(current.id) { mutableIntStateOf(current.progressChars) }
+    val initialResumePosition = remember(current.id, current.progressChars) {
+        ReadingPositionResolver.resumeStart(current.content, current.progressChars)
+    }
+    var narrationState by remember(current.id) { mutableStateOf(NarrationUiState(position = initialResumePosition)) }
+    var manualPosition by remember(current.id) { mutableIntStateOf(initialResumePosition) }
     var speechRate by rememberSaveable(current.id) { mutableFloatStateOf(1.0f) }
     var ambientVolume by rememberSaveable(current.id) { mutableFloatStateOf(0.30f) }
+    var voiceMode by remember(current.id) { mutableStateOf(VoicePreferenceStore.get(context, current.id)) }
 
     DisposableEffect(current.id) {
         val receiver = object : BroadcastReceiver() {
@@ -317,6 +326,9 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                 if (stateBookId == current.id) {
                     manualPosition = state.position.coerceIn(0, current.content.length)
                     speechRate = state.rate
+                    voiceMode = intent.getStringExtra(NarrationService.EXTRA_VOICE_MODE)?.let { raw ->
+                        runCatching { VoiceMode.valueOf(raw) }.getOrNull()
+                    } ?: voiceMode
                 }
             }
         }
@@ -339,7 +351,12 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
     LaunchedEffect(current.id, scroll.maxValue) {
         val measured = scroll.maxValue != Int.MAX_VALUE
         if (!restored && measured && scroll.maxValue >= 0 && current.content.isNotBlank()) {
-            val savedPosition = if (activeBook) narrationState.position else current.progressChars
+            val rawSavedPosition = if (activeBook) narrationState.position else current.progressChars
+            val savedPosition = if (isSpeaking) {
+                rawSavedPosition.coerceIn(0, current.content.length)
+            } else {
+                ReadingPositionResolver.resumeStart(current.content, rawSavedPosition)
+            }
             val savedFraction = (savedPosition.toFloat() / current.content.length).coerceIn(0f, 1f)
             scroll.scrollTo((savedFraction * scroll.maxValue).roundToInt())
             manualPosition = savedPosition.coerceIn(0, current.content.length)
@@ -394,6 +411,18 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
         localMoodSnapshot
     }
     val ambientIsPlaying = activeBook && narrationState.ambientActive
+    val voiceLabel = remember(voiceMode, display.author) {
+        when (voiceMode) {
+            VoiceMode.AUTO -> when (AuthorVoiceProfile.infer(display.author)) {
+                VoiceMode.MASCULINE -> "Auto · masculina"
+                VoiceMode.FEMININE -> "Auto · femenina"
+                else -> "Auto · sistema"
+            }
+            VoiceMode.MASCULINE -> "Masculina"
+            VoiceMode.FEMININE -> "Femenina"
+            VoiceMode.SYSTEM -> "Sistema"
+        }
+    }
 
     fun positionFromScroll(): Int {
         return if (restored && measured && scroll.maxValue > 0 && current.content.isNotBlank()) {
@@ -534,6 +563,38 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                             speechRate = (speechRate + 0.1f).coerceAtMost(1.8f)
                             if (activeBook) NarrationClient.setRate(context, speechRate)
                         }) { Icon(Icons.Default.Add, "Hablar más rápido") }
+
+                        Box {
+                            TextButton(onClick = { showVoiceMenu = true }) {
+                                Icon(Icons.Default.RecordVoiceOver, null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(voiceLabel, maxLines = 1)
+                            }
+                            DropdownMenu(expanded = showVoiceMenu, onDismissRequest = { showVoiceMenu = false }) {
+                                VoiceMode.entries.forEach { mode ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Column {
+                                                Text(mode.label)
+                                                if (mode == VoiceMode.AUTO) {
+                                                    Text("Según el autor cuando Talevane pueda determinarlo", style = MaterialTheme.typography.bodySmall)
+                                                }
+                                            }
+                                        },
+                                        leadingIcon = {
+                                            if (mode == voiceMode) Icon(Icons.Default.Check, null)
+                                            else Icon(Icons.Default.RecordVoiceOver, null)
+                                        },
+                                        onClick = {
+                                            voiceMode = mode
+                                            NarrationClient.setVoiceMode(context, current.id, mode)
+                                            showVoiceMenu = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+
                         Spacer(Modifier.weight(1f))
                         Text("$percentLabel%", style = MaterialTheme.typography.labelLarge)
                     }
