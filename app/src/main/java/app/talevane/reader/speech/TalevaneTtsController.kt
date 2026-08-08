@@ -31,7 +31,7 @@ class TalevaneTtsController(
         if (status != TextToSpeech.SUCCESS) {
             post {
                 onReadyChanged(false)
-                onError("No se pudo iniciar la voz del dispositivo.")
+                this@TalevaneTtsController.onError("No se pudo iniciar la voz del dispositivo.")
             }
             return
         }
@@ -60,7 +60,7 @@ class TalevaneTtsController(
             override fun onError(utteranceId: String?) {
                 post {
                     onSpeakingChanged(false)
-                    onError("La voz se detuvo por un error del motor TTS.")
+                    this@TalevaneTtsController.onError("La voz se detuvo por un error del motor TTS.")
                 }
             }
 
