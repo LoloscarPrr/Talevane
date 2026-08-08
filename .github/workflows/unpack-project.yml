@@ -29,6 +29,7 @@ jobs:
           fi
           rm -rf extracted
           unzip -q "$ZIP_FILE" -d extracted
+          rm -rf extracted/.github
           cp -R extracted/. .
           rm -rf extracted
 
