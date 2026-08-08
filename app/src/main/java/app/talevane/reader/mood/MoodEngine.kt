@@ -14,11 +14,12 @@ enum class ReadingMood(val label: String, val description: String) {
     WARMTH("Calidez", "Cercanía, afecto o alivio")
 }
 
-data class MoodSnapshot(
-    val mood: ReadingMood,
+class MoodSnapshot(
+    mood: ReadingMood?,
     val intensity: Float,
     val confidence: Float
 ) {
+    val mood: ReadingMood = mood ?: ReadingMood.NEUTRAL
     val intensityPercent: Int get() = (intensity * 100f).roundToInt()
 }
 
