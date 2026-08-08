@@ -18,12 +18,17 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.talevane.reader.R
 import app.talevane.reader.data.*
+import app.talevane.reader.speech.TalevaneTtsController
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -68,12 +73,28 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
         ) {
             item {
                 Spacer(Modifier.height(14.dp))
-                Row(verticalAlignment = Alignment.Bottom) {
-                    Text("Talevane", style = MaterialTheme.typography.headlineLarge)
-                    Spacer(Modifier.width(8.dp))
-                    Text("v0.2", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        modifier = Modifier.size(54.dp).clip(RoundedCornerShape(16.dp)),
+                        color = MaterialTheme.colorScheme.primaryContainer
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_talevane_logo),
+                            contentDescription = "Talevane",
+                            modifier = Modifier.padding(9.dp),
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Column {
+                        Row(verticalAlignment = Alignment.Bottom) {
+                            Text("Talevane", style = MaterialTheme.typography.headlineLarge)
+                            Spacer(Modifier.width(8.dp))
+                            Text("v0.3", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                        }
+                        Text("Tus historias, llevadas a la vida.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
-                Text("Tus historias, llevadas a la vida.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(14.dp))
             }
 
@@ -181,6 +202,7 @@ private fun BookRow(book: BookEntity, onClick: () -> Unit) {
 @Composable
 private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> Unit) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var book by remember { mutableStateOf<BookEntity?>(null) }
     var fontSize by rememberSaveable { mutableStateOf(19f) }
     var restored by remember(bookId) { mutableStateOf(false) }
@@ -191,11 +213,37 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
         CircularProgressIndicator()
     }
 
+    var ttsReady by remember(current.id) { mutableStateOf(false) }
+    var isSpeaking by remember(current.id) { mutableStateOf(false) }
+    var speechPosition by remember(current.id) { mutableIntStateOf(current.progressChars) }
+    var speechRate by rememberSaveable(current.id) { mutableFloatStateOf(1.0f) }
+    var speechError by remember(current.id) { mutableStateOf<String?>(null) }
+
+    val ttsController = remember(current.id) {
+        TalevaneTtsController(
+            context = context,
+            onReadyChanged = { ttsReady = it },
+            onSpeakingChanged = { isSpeaking = it },
+            onPositionChanged = { position ->
+                speechPosition = position.coerceIn(0, current.content.length)
+                scope.launch { repository.saveProgress(current.id, speechPosition) }
+            },
+            onError = { speechError = it }
+        )
+    }
+
+    DisposableEffect(ttsController) {
+        onDispose { ttsController.shutdown() }
+    }
+
+    LaunchedEffect(speechRate) { ttsController.setRate(speechRate) }
+
     LaunchedEffect(current.id, scroll.maxValue) {
         val measured = scroll.maxValue != Int.MAX_VALUE
         if (!restored && measured && scroll.maxValue >= 0 && current.content.isNotBlank()) {
             val savedFraction = (current.progressChars.toFloat() / current.content.length).coerceIn(0f, 1f)
             scroll.scrollTo((savedFraction * scroll.maxValue).roundToInt())
+            speechPosition = current.progressChars.coerceIn(0, current.content.length)
             restored = true
         }
     }
@@ -203,16 +251,27 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
     LaunchedEffect(current.id) {
         snapshotFlow { scroll.value }.collectLatest { value ->
             val measured = scroll.maxValue != Int.MAX_VALUE
-            if (!restored || !measured || scroll.maxValue <= 0 || current.content.isBlank()) return@collectLatest
+            if (!restored || !measured || scroll.maxValue <= 0 || current.content.isBlank() || isSpeaking) return@collectLatest
             delay(350)
             val fraction = (value.toFloat() / scroll.maxValue).coerceIn(0f, 1f)
-            repository.saveProgress(current.id, (fraction * current.content.length).roundToInt())
+            val position = (fraction * current.content.length).roundToInt()
+            speechPosition = position
+            repository.saveProgress(current.id, position)
+        }
+    }
+
+    LaunchedEffect(speechPosition, isSpeaking, restored, scroll.maxValue) {
+        val measured = scroll.maxValue != Int.MAX_VALUE
+        if (isSpeaking && restored && measured && scroll.maxValue > 0 && current.content.isNotBlank()) {
+            val fraction = (speechPosition.toFloat() / current.content.length).coerceIn(0f, 1f)
+            scroll.scrollTo((fraction * scroll.maxValue).roundToInt())
         }
     }
 
     val measured = scroll.maxValue != Int.MAX_VALUE
     val readingPercent = when {
         current.content.isBlank() -> 0f
+        isSpeaking -> (speechPosition.toFloat() / current.content.length).coerceIn(0f, 1f)
         restored && measured && scroll.maxValue > 0 -> (scroll.value.toFloat() / scroll.maxValue).coerceIn(0f, 1f)
         else -> (current.progressChars.toFloat() / current.content.length).coerceIn(0f, 1f)
     }
@@ -233,7 +292,12 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                         )
                     }
                 },
-                navigationIcon = { IconButton(onClick = back) { Icon(Icons.Default.ArrowBack, "Volver") } },
+                navigationIcon = {
+                    IconButton(onClick = {
+                        ttsController.stop()
+                        back()
+                    }) { Icon(Icons.Default.ArrowBack, "Volver") }
+                },
                 actions = {
                     IconButton(onClick = {
                         scope.launch {
@@ -251,10 +315,72 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
         },
         bottomBar = {
             Surface(tonalElevation = 3.dp) {
-                Column(Modifier.fillMaxWidth()) {
+                Column(Modifier.fillMaxWidth().navigationBarsPadding()) {
                     LinearProgressIndicator(progress = { readingPercent }, modifier = Modifier.fillMaxWidth())
+
+                    speechError?.let { error ->
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.ErrorOutline, null, tint = MaterialTheme.colorScheme.error)
+                            Spacer(Modifier.width(8.dp))
+                            Text(error, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                            IconButton(onClick = { speechError = null }) { Icon(Icons.Default.Close, "Cerrar") }
+                        }
+                    }
+
                     Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                        Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FilledTonalIconButton(
+                            enabled = ttsReady && current.content.isNotBlank(),
+                            onClick = {
+                                if (isSpeaking) {
+                                    ttsController.stop()
+                                    scope.launch { repository.saveProgress(current.id, speechPosition) }
+                                } else {
+                                    val start = if (restored && measured && scroll.maxValue > 0) {
+                                        ((scroll.value.toFloat() / scroll.maxValue) * current.content.length).roundToInt()
+                                    } else {
+                                        speechPosition
+                                    }.coerceIn(0, current.content.length)
+                                    speechPosition = start
+                                    speechError = null
+                                    ttsController.speak(current.content, start)
+                                }
+                            }
+                        ) {
+                            Icon(
+                                if (isSpeaking) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                if (isSpeaking) "Pausar narración" else "Escuchar libro"
+                            )
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                when {
+                                    isSpeaking -> "Narrando"
+                                    ttsReady -> "Escuchar desde aquí"
+                                    else -> "Preparando voz…"
+                                },
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                            Text("Voz del dispositivo · ${"%.1f".format(speechRate)}×", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        IconButton(onClick = {
+                            speechRate = (speechRate - 0.1f).coerceAtLeast(0.6f)
+                        }) { Icon(Icons.Default.Remove, "Hablar más lento") }
+                        Text("${"%.1f".format(speechRate)}×", style = MaterialTheme.typography.labelMedium)
+                        IconButton(onClick = {
+                            speechRate = (speechRate + 0.1f).coerceAtMost(1.8f)
+                        }) { Icon(Icons.Default.Add, "Hablar más rápido") }
+                    }
+
+                    HorizontalDivider()
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         TextButton(onClick = { fontSize = (fontSize - 1).coerceAtLeast(14f) }) { Text("A−") }
