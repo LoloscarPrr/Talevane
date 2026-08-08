@@ -27,6 +27,22 @@ jobs:
           unzip -q "$ZIP_FILE" -d extracted
           cp -R extracted/. .
 
+      - name: Opt in to Material 3 experimental API
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("app/src/main/java/app/talevane/reader/ui/TalevaneRoot.kt")
+          if not path.exists():
+              raise SystemExit(f"Expected Kotlin source not found: {path}")
+
+          text = path.read_text(encoding="utf-8")
+          annotation = "@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)\n\n"
+          if not text.startswith(annotation):
+              path.write_text(annotation + text, encoding="utf-8")
+          PY
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
