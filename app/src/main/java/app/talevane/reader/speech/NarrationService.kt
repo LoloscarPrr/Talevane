@@ -12,6 +12,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.speech.tts.Voice
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
@@ -46,6 +47,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_STOP = "app.talevane.reader.action.NARRATION_STOP"
         const val ACTION_SET_RATE = "app.talevane.reader.action.NARRATION_RATE"
         const val ACTION_SET_AMBIENT_VOLUME = "app.talevane.reader.action.AMBIENT_VOLUME"
+        const val ACTION_SET_VOICE_MODE = "app.talevane.reader.action.VOICE_MODE"
         const val ACTION_QUERY = "app.talevane.reader.action.NARRATION_QUERY"
         const val ACTION_STATE = "app.talevane.reader.action.NARRATION_STATE"
 
@@ -61,6 +63,8 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         const val EXTRA_AMBIENT_ACTIVE = "ambient_active"
         const val EXTRA_MOOD = "mood"
         const val EXTRA_MOOD_INTENSITY = "mood_intensity"
+        const val EXTRA_VOICE_MODE = "voice_mode"
+        const val EXTRA_VOICE_LABEL = "voice_label"
 
         private const val CHANNEL_ID = "talevane_narration"
         private const val NOTIFICATION_ID = 4104
@@ -74,6 +78,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
     private val chunkPositions = ConcurrentHashMap<String, SpeechChunk>()
 
     private var tts: TextToSpeech? = null
+    private var defaultVoice: Voice? = null
     private lateinit var mediaSession: MediaSessionCompat
     private lateinit var ambientSound: AmbientSoundEngine
 
@@ -87,6 +92,8 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
     private var currentPosition = 0
     private var speechRate = 1.0f
     private var ambientVolume = 0.30f
+    private var currentVoiceMode = VoiceMode.AUTO
+    private var voiceProfileLabel = "Auto · sistema"
     private var moodSnapshot = MoodSnapshot(ReadingMood.NEUTRAL, 0.15f, 0.25f)
     private var lastMoodBucket = Int.MIN_VALUE
     private var lastUtteranceId: String? = null
@@ -149,6 +156,22 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                 refreshNotification()
                 if (currentBookId < 0 && !isSpeaking) stopSelf(startId)
             }
+            ACTION_SET_VOICE_MODE -> {
+                val bookId = intent.getLongExtra(EXTRA_BOOK_ID, -1L)
+                val mode = intent.getStringExtra(EXTRA_VOICE_MODE)?.let { raw ->
+                    runCatching { VoiceMode.valueOf(raw) }.getOrNull()
+                } ?: VoiceMode.AUTO
+                if (bookId >= 0) VoicePreferenceStore.set(this, bookId, mode)
+                if (bookId == currentBookId) {
+                    currentVoiceMode = mode
+                    applyVoiceProfile()
+                    if (isSpeaking) speakCurrent()
+                    publishState()
+                    refreshNotification()
+                } else if (currentBookId < 0 && !isSpeaking) {
+                    stopSelf(startId)
+                }
+            }
             ACTION_QUERY -> {
                 publishState()
                 if (currentBookId < 0 && !isSpeaking) stopSelf(startId)
@@ -172,6 +195,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
             engine.setLanguage(Locale("es", "ES"))
         }
+        defaultVoice = engine.voice
         engine.setSpeechRate(speechRate)
         engine.setAudioAttributes(
             AudioAttributes.Builder()
@@ -179,6 +203,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                 .build()
         )
+        applyVoiceProfile()
         engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
                 mainHandler.post {
@@ -287,10 +312,18 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         currentAuthor = book.author
         currentContent = book.content
         currentPosition = requestedPosition.coerceIn(0, currentContent.length)
+        currentVoiceMode = VoicePreferenceStore.get(this, book.id)
+        applyVoiceProfile()
         lastReportedPosition = currentPosition
         lastMoodBucket = Int.MIN_VALUE
         moodSnapshot = MoodEngine.analyze(currentContent, currentPosition)
         ambientSound.setMood(moodSnapshot.mood, moodSnapshot.intensity)
+    }
+
+    private fun applyVoiceProfile() {
+        val engine = tts ?: return
+        val result = AuthorVoiceProfile.apply(engine, defaultVoice, currentVoiceMode, currentAuthor)
+        voiceProfileLabel = result.label
     }
 
     private fun speakCurrent() {
@@ -302,6 +335,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         chunkPositions.clear()
         lastUtteranceId = null
         engine.setSpeechRate(speechRate)
+        applyVoiceProfile()
         updateAmbientMood(force = true)
 
         val chunks = buildChunks(currentContent, currentPosition)
@@ -455,8 +489,8 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
 
         val statusText = when {
             lastError != null -> lastError
-            isSpeaking -> "${moodSnapshot.mood.label} · ambiente ${(ambientVolume * 100).toInt()}% · ${"%.1f".format(speechRate)}×"
-            currentBookId >= 0 -> "En pausa · ${moodSnapshot.mood.label}"
+            isSpeaking -> "${moodSnapshot.mood.label} · $voiceProfileLabel · ${"%.1f".format(speechRate)}×"
+            currentBookId >= 0 -> "En pausa · $voiceProfileLabel"
             else -> "Preparando narración…"
         }
 
@@ -530,6 +564,8 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                 .putExtra(EXTRA_AMBIENT_ACTIVE, isSpeaking && ambientVolume > 0f)
                 .putExtra(EXTRA_MOOD, moodSnapshot.mood.name)
                 .putExtra(EXTRA_MOOD_INTENSITY, moodSnapshot.intensity)
+                .putExtra(EXTRA_VOICE_MODE, currentVoiceMode.name)
+                .putExtra(EXTRA_VOICE_LABEL, voiceProfileLabel)
         )
     }
 
