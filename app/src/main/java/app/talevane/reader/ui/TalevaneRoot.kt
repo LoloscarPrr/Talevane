@@ -34,11 +34,8 @@ fun TalevaneRoot(repository: BookRepository) {
     var readerId by rememberSaveable { mutableStateOf<Long?>(null) }
     MaterialTheme(colorScheme = darkColorScheme()) {
         Surface(Modifier.fillMaxSize()) {
-            if (readerId == null) {
-                LibraryScreen(repository) { readerId = it }
-            } else {
-                ReaderScreen(repository, readerId!!) { readerId = null }
-            }
+            if (readerId == null) LibraryScreen(repository) { readerId = it }
+            else ReaderScreen(repository, readerId!!) { readerId = null }
         }
     }
 }
@@ -48,14 +45,11 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
     val books by repository.books.collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
     var error by remember { mutableStateOf<String?>(null) }
-
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        if (uri != null) {
-            scope.launch {
-                runCatching { repository.import(uri) }
-                    .onSuccess { openBook(it) }
-                    .onFailure { error = it.message ?: "No se pudo importar el libro." }
-            }
+        if (uri != null) scope.launch {
+            runCatching { repository.import(uri) }
+                .onSuccess { openBook(it) }
+                .onFailure { error = it.message ?: "No se pudo importar el libro." }
         }
     }
 
@@ -69,7 +63,7 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
         }
     ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp),
+            Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
@@ -89,7 +83,7 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
                         Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.ErrorOutline, null)
                             Spacer(Modifier.width(10.dp))
-                            Text(msg, modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onErrorContainer)
+                            Text(msg, Modifier.weight(1f), color = MaterialTheme.colorScheme.onErrorContainer)
                             IconButton(onClick = { error = null }) { Icon(Icons.Default.Close, "Cerrar") }
                         }
                     }
@@ -117,9 +111,7 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                items(books, key = { it.id }) { book ->
-                    BookRow(book) { openBook(book.id) }
-                }
+                items(books, key = { it.id }) { book -> BookRow(book) { openBook(book.id) } }
                 item { Spacer(Modifier.height(90.dp)) }
             }
         }
@@ -130,11 +122,10 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
 private fun BookRow(book: BookEntity, onClick: () -> Unit) {
     val percent = if (book.content.isBlank()) 0f else (book.progressChars.toFloat() / book.content.length).coerceIn(0f, 1f)
     val percentLabel = (percent * 100).roundToInt()
-
     Card(Modifier.fillMaxWidth().clickable(onClick = onClick)) {
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Surface(
-                modifier = Modifier.width(66.dp).height(92.dp),
+                Modifier.width(66.dp).height(92.dp),
                 shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.primaryContainer
             ) {
@@ -147,7 +138,6 @@ private fun BookRow(book: BookEntity, onClick: () -> Unit) {
                     )
                 }
             }
-
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -196,16 +186,14 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
     var restored by remember(bookId) { mutableStateOf(false) }
     val scroll = rememberScrollState()
 
-    LaunchedEffect(bookId) {
-        book = repository.get(bookId)
-    }
-
+    LaunchedEffect(bookId) { book = repository.get(bookId) }
     val current = book ?: return Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
         CircularProgressIndicator()
     }
 
     LaunchedEffect(current.id, scroll.maxValue) {
-        if (!restored && scroll.maxValue > 0 && current.content.isNotBlank()) {
+        val measured = scroll.maxValue != Int.MAX_VALUE
+        if (!restored && measured && scroll.maxValue >= 0 && current.content.isNotBlank()) {
             val savedFraction = (current.progressChars.toFloat() / current.content.length).coerceIn(0f, 1f)
             scroll.scrollTo((savedFraction * scroll.maxValue).roundToInt())
             restored = true
@@ -214,16 +202,18 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
 
     LaunchedEffect(current.id) {
         snapshotFlow { scroll.value }.collectLatest { value ->
-            if (!restored || scroll.maxValue <= 0 || current.content.isBlank()) return@collectLatest
+            val measured = scroll.maxValue != Int.MAX_VALUE
+            if (!restored || !measured || scroll.maxValue <= 0 || current.content.isBlank()) return@collectLatest
             delay(350)
             val fraction = (value.toFloat() / scroll.maxValue).coerceIn(0f, 1f)
             repository.saveProgress(current.id, (fraction * current.content.length).roundToInt())
         }
     }
 
+    val measured = scroll.maxValue != Int.MAX_VALUE
     val readingPercent = when {
         current.content.isBlank() -> 0f
-        restored && scroll.maxValue > 0 -> (scroll.value.toFloat() / scroll.maxValue).coerceIn(0f, 1f)
+        restored && measured && scroll.maxValue > 0 -> (scroll.value.toFloat() / scroll.maxValue).coerceIn(0f, 1f)
         else -> (current.progressChars.toFloat() / current.content.length).coerceIn(0f, 1f)
     }
     val percentLabel = (readingPercent * 100).roundToInt()
@@ -243,18 +233,14 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                         )
                     }
                 },
-                navigationIcon = {
-                    IconButton(onClick = back) { Icon(Icons.Default.ArrowBack, "Volver") }
-                },
+                navigationIcon = { IconButton(onClick = back) { Icon(Icons.Default.ArrowBack, "Volver") } },
                 actions = {
-                    IconButton(
-                        onClick = {
-                            scope.launch {
-                                repository.toggleBookmark(current)
-                                book = repository.get(current.id)
-                            }
+                    IconButton(onClick = {
+                        scope.launch {
+                            repository.toggleBookmark(current)
+                            book = repository.get(current.id)
                         }
-                    ) {
+                    }) {
                         Icon(
                             if (current.bookmarked) Icons.Default.Bookmark else Icons.Outlined.BookmarkBorder,
                             if (current.bookmarked) "Quitar marcador" else "Marcar libro"
@@ -285,12 +271,10 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
         Column(
             Modifier.fillMaxSize().padding(padding).verticalScroll(scroll).padding(horizontal = 24.dp, vertical = 20.dp)
         ) {
-            if (current.progressChars == 0) {
-                Text(current.title, style = MaterialTheme.typography.headlineMedium, fontFamily = FontFamily.Serif)
-                Spacer(Modifier.height(6.dp))
-                Text(current.author, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(24.dp))
-            }
+            Text(current.title, style = MaterialTheme.typography.headlineMedium, fontFamily = FontFamily.Serif)
+            Spacer(Modifier.height(6.dp))
+            Text(current.author, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(24.dp))
             Text(
                 current.content.ifBlank { "No se pudo extraer texto legible de este archivo." },
                 fontSize = fontSize.sp,
