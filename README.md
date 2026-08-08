@@ -1,6 +1,14 @@
-# Talevane v0.6.1
+# Talevane v0.6.2
 
 Offline-first Android book reader evolving into an immersive listening experience.
+
+## v0.6.2 — Voice Lab
+- Fixes gender-tag matching so `female` can no longer be mistaken for `male`
+- Masculine and Feminine modes open a real installed-voice laboratory
+- Preview Spanish TTS voices before selecting one
+- Selected masculine/feminine voice is stored per book
+- Auto mode reuses a saved voice when the inferred author profile matches
+- Pitch shifting is now only a clearly-labelled last-resort approximation
 
 ## v0.6.1 — Reading Continuity & Voice
 - Resume from the beginning of the last paragraph or nearest reliable text block

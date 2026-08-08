@@ -60,7 +60,8 @@ private data class NarrationUiState(
     val ambientVolume: Float = 0.30f,
     val ambientActive: Boolean = false,
     val mood: ReadingMood? = null,
-    val moodIntensity: Float = 0.15f
+    val moodIntensity: Float = 0.15f,
+    val voiceLabel: String = "Auto · sistema"
 )
 
 @Composable
@@ -130,7 +131,7 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
                         Row(verticalAlignment = Alignment.Bottom) {
                             Text("Talevane", style = MaterialTheme.typography.headlineLarge)
                             Spacer(Modifier.width(8.dp))
-                            Text("v0.6.1", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            Text("v0.6.2", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                         }
                         Text("Tus historias, llevadas a la vida.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -319,7 +320,8 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                     ambientVolume = intent.getFloatExtra(NarrationService.EXTRA_AMBIENT_VOLUME, 0.30f),
                     ambientActive = intent.getBooleanExtra(NarrationService.EXTRA_AMBIENT_ACTIVE, false),
                     mood = mood,
-                    moodIntensity = intent.getFloatExtra(NarrationService.EXTRA_MOOD_INTENSITY, 0.15f)
+                    moodIntensity = intent.getFloatExtra(NarrationService.EXTRA_MOOD_INTENSITY, 0.15f),
+                    voiceLabel = intent.getStringExtra(NarrationService.EXTRA_VOICE_LABEL) ?: "Auto · sistema"
                 )
                 narrationState = state
                 ambientVolume = state.ambientVolume
@@ -411,15 +413,15 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
         localMoodSnapshot
     }
     val ambientIsPlaying = activeBook && narrationState.ambientActive
-    val voiceLabel = remember(voiceMode, display.author) {
+    val voiceLabel = if (activeBook) narrationState.voiceLabel else {
         when (voiceMode) {
             VoiceMode.AUTO -> when (AuthorVoiceProfile.infer(display.author)) {
                 VoiceMode.MASCULINE -> "Auto · masculina"
                 VoiceMode.FEMININE -> "Auto · femenina"
                 else -> "Auto · sistema"
             }
-            VoiceMode.MASCULINE -> "Masculina"
-            VoiceMode.FEMININE -> "Femenina"
+            VoiceMode.MASCULINE -> "Masculina · elegir"
+            VoiceMode.FEMININE -> "Femenina · elegir"
             VoiceMode.SYSTEM -> "Sistema"
         }
     }
@@ -576,8 +578,10 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                                         text = {
                                             Column {
                                                 Text(mode.label)
-                                                if (mode == VoiceMode.AUTO) {
-                                                    Text("Según el autor cuando Talevane pueda determinarlo", style = MaterialTheme.typography.bodySmall)
+                                                when (mode) {
+                                                    VoiceMode.AUTO -> Text("Según el autor cuando Talevane pueda determinarlo", style = MaterialTheme.typography.bodySmall)
+                                                    VoiceMode.MASCULINE, VoiceMode.FEMININE -> Text("Abre el laboratorio para probar voces reales del teléfono", style = MaterialTheme.typography.bodySmall)
+                                                    VoiceMode.SYSTEM -> Unit
                                                 }
                                             }
                                         },
