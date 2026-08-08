@@ -1,5 +1,9 @@
 package app.talevane.reader.ui
 
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -26,13 +30,26 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import app.talevane.reader.R
+import app.talevane.reader.chapters.BookChapter
+import app.talevane.reader.chapters.ChapterDetector
 import app.talevane.reader.data.*
-import app.talevane.reader.speech.TalevaneTtsController
+import app.talevane.reader.speech.NarrationClient
+import app.talevane.reader.speech.NarrationService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+
+private data class NarrationUiState(
+    val bookId: Long = -1L,
+    val position: Int = 0,
+    val rate: Float = 1.0f,
+    val speaking: Boolean = false,
+    val ready: Boolean = false,
+    val error: String? = null
+)
 
 @Composable
 fun TalevaneRoot(repository: BookRepository) {
@@ -90,7 +107,7 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
                         Row(verticalAlignment = Alignment.Bottom) {
                             Text("Talevane", style = MaterialTheme.typography.headlineLarge)
                             Spacer(Modifier.width(8.dp))
-                            Text("v0.3", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            Text("v0.4", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                         }
                         Text("Tus historias, llevadas a la vida.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -206,6 +223,7 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
     var book by remember { mutableStateOf<BookEntity?>(null) }
     var fontSize by rememberSaveable { mutableStateOf(19f) }
     var restored by remember(bookId) { mutableStateOf(false) }
+    var showChapters by rememberSaveable { mutableStateOf(false) }
     val scroll = rememberScrollState()
 
     LaunchedEffect(bookId) { book = repository.get(bookId) }
@@ -213,37 +231,56 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
         CircularProgressIndicator()
     }
 
-    var ttsReady by remember(current.id) { mutableStateOf(false) }
-    var isSpeaking by remember(current.id) { mutableStateOf(false) }
-    var speechPosition by remember(current.id) { mutableIntStateOf(current.progressChars) }
+    val chapters = remember(current.content) { ChapterDetector.detect(current.content) }
+    var narrationState by remember(current.id) { mutableStateOf(NarrationUiState(position = current.progressChars)) }
+    var manualPosition by remember(current.id) { mutableIntStateOf(current.progressChars) }
     var speechRate by rememberSaveable(current.id) { mutableFloatStateOf(1.0f) }
-    var speechError by remember(current.id) { mutableStateOf<String?>(null) }
 
-    val ttsController = remember(current.id) {
-        TalevaneTtsController(
-            context = context,
-            onReadyChanged = { ttsReady = it },
-            onSpeakingChanged = { isSpeaking = it },
-            onPositionChanged = { position ->
-                speechPosition = position.coerceIn(0, current.content.length)
-                scope.launch { repository.saveProgress(current.id, speechPosition) }
-            },
-            onError = { speechError = it }
+    DisposableEffect(current.id) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(receiverContext: Context?, intent: Intent?) {
+                if (intent?.action != NarrationService.ACTION_STATE) return
+                val stateBookId = intent.getLongExtra(NarrationService.EXTRA_BOOK_ID, -1L)
+                val state = NarrationUiState(
+                    bookId = stateBookId,
+                    position = intent.getIntExtra(NarrationService.EXTRA_POSITION, 0),
+                    rate = intent.getFloatExtra(NarrationService.EXTRA_RATE, 1.0f),
+                    speaking = intent.getBooleanExtra(NarrationService.EXTRA_SPEAKING, false),
+                    ready = intent.getBooleanExtra(NarrationService.EXTRA_READY, false),
+                    error = intent.getStringExtra(NarrationService.EXTRA_ERROR)
+                )
+                narrationState = state
+                if (stateBookId == current.id) {
+                    manualPosition = state.position.coerceIn(0, current.content.length)
+                    speechRate = state.rate
+                }
+            }
+        }
+
+        ContextCompat.registerReceiver(
+            context,
+            receiver,
+            IntentFilter(NarrationService.ACTION_STATE),
+            ContextCompat.RECEIVER_NOT_EXPORTED
         )
+        NarrationClient.query(context)
+
+        onDispose {
+            runCatching { context.unregisterReceiver(receiver) }
+        }
     }
 
-    DisposableEffect(ttsController) {
-        onDispose { ttsController.shutdown() }
-    }
-
-    LaunchedEffect(speechRate) { ttsController.setRate(speechRate) }
+    val activeBook = narrationState.bookId == current.id
+    val isSpeaking = activeBook && narrationState.speaking
+    val speechError = if (activeBook) narrationState.error else null
 
     LaunchedEffect(current.id, scroll.maxValue) {
         val measured = scroll.maxValue != Int.MAX_VALUE
         if (!restored && measured && scroll.maxValue >= 0 && current.content.isNotBlank()) {
-            val savedFraction = (current.progressChars.toFloat() / current.content.length).coerceIn(0f, 1f)
+            val savedPosition = if (activeBook) narrationState.position else current.progressChars
+            val savedFraction = (savedPosition.toFloat() / current.content.length).coerceIn(0f, 1f)
             scroll.scrollTo((savedFraction * scroll.maxValue).roundToInt())
-            speechPosition = current.progressChars.coerceIn(0, current.content.length)
+            manualPosition = savedPosition.coerceIn(0, current.content.length)
             restored = true
         }
     }
@@ -255,27 +292,79 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
             delay(350)
             val fraction = (value.toFloat() / scroll.maxValue).coerceIn(0f, 1f)
             val position = (fraction * current.content.length).roundToInt()
-            speechPosition = position
+            manualPosition = position
             repository.saveProgress(current.id, position)
         }
     }
 
-    LaunchedEffect(speechPosition, isSpeaking, restored, scroll.maxValue) {
+    LaunchedEffect(narrationState.position, isSpeaking, restored, scroll.maxValue) {
         val measured = scroll.maxValue != Int.MAX_VALUE
         if (isSpeaking && restored && measured && scroll.maxValue > 0 && current.content.isNotBlank()) {
-            val fraction = (speechPosition.toFloat() / current.content.length).coerceIn(0f, 1f)
+            val fraction = (narrationState.position.toFloat() / current.content.length).coerceIn(0f, 1f)
             scroll.scrollTo((fraction * scroll.maxValue).roundToInt())
         }
     }
 
     val measured = scroll.maxValue != Int.MAX_VALUE
+    val activePosition = if (isSpeaking) narrationState.position else manualPosition
     val readingPercent = when {
         current.content.isBlank() -> 0f
-        isSpeaking -> (speechPosition.toFloat() / current.content.length).coerceIn(0f, 1f)
-        restored && measured && scroll.maxValue > 0 -> (scroll.value.toFloat() / scroll.maxValue).coerceIn(0f, 1f)
-        else -> (current.progressChars.toFloat() / current.content.length).coerceIn(0f, 1f)
+        current.content.isNotBlank() -> (activePosition.toFloat() / current.content.length).coerceIn(0f, 1f)
+        else -> 0f
     }
     val percentLabel = (readingPercent * 100).roundToInt()
+    val currentChapter = chapters.lastOrNull { it.start <= activePosition } ?: chapters.firstOrNull()
+
+    fun positionFromScroll(): Int {
+        return if (restored && measured && scroll.maxValue > 0 && current.content.isNotBlank()) {
+            ((scroll.value.toFloat() / scroll.maxValue) * current.content.length).roundToInt()
+        } else {
+            manualPosition
+        }.coerceIn(0, current.content.length)
+    }
+
+    fun jumpToChapter(chapter: BookChapter) {
+        val position = chapter.start.coerceIn(0, current.content.length)
+        manualPosition = position
+        scope.launch {
+            if (measured && scroll.maxValue >= 0 && current.content.isNotBlank()) {
+                val fraction = position.toFloat() / current.content.length
+                scroll.scrollTo((fraction * scroll.maxValue).roundToInt())
+            }
+            repository.saveProgress(current.id, position)
+        }
+        if (isSpeaking) {
+            NarrationClient.start(context, current.id, position, speechRate)
+        }
+        showChapters = false
+    }
+
+    if (showChapters) {
+        ModalBottomSheet(onDismissRequest = { showChapters = false }) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+                Text("Capítulos", style = MaterialTheme.typography.headlineSmall)
+                Text(
+                    "${chapters.size} secciones detectadas",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(12.dp))
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 520.dp)) {
+                    items(chapters, key = { it.start }) { chapter ->
+                        val chapterPercent = if (current.content.isBlank()) 0 else
+                            ((chapter.start.toFloat() / current.content.length) * 100).roundToInt()
+                        ListItem(
+                            headlineContent = { Text(chapter.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                            supportingContent = { Text("Aprox. $chapterPercent% del libro") },
+                            leadingContent = { Icon(Icons.Default.MenuBook, null) },
+                            modifier = Modifier.clickable { jumpToChapter(chapter) }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(24.dp))
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -284,7 +373,7 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                     Column {
                         Text(current.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
-                            current.author,
+                            currentChapter?.title ?: current.author,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -293,12 +382,12 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = {
-                        ttsController.stop()
-                        back()
-                    }) { Icon(Icons.Default.ArrowBack, "Volver") }
+                    IconButton(onClick = back) { Icon(Icons.Default.ArrowBack, "Volver") }
                 },
                 actions = {
+                    IconButton(onClick = { showChapters = true }) {
+                        Icon(Icons.Default.List, "Capítulos")
+                    }
                     IconButton(onClick = {
                         scope.launch {
                             repository.toggleBookmark(current)
@@ -326,7 +415,6 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                             Icon(Icons.Default.ErrorOutline, null, tint = MaterialTheme.colorScheme.error)
                             Spacer(Modifier.width(8.dp))
                             Text(error, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                            IconButton(onClick = { speechError = null }) { Icon(Icons.Default.Close, "Cerrar") }
                         }
                     }
 
@@ -335,20 +423,14 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         FilledTonalIconButton(
-                            enabled = ttsReady && current.content.isNotBlank(),
+                            enabled = current.content.isNotBlank(),
                             onClick = {
                                 if (isSpeaking) {
-                                    ttsController.stop()
-                                    scope.launch { repository.saveProgress(current.id, speechPosition) }
+                                    NarrationClient.pause(context)
                                 } else {
-                                    val start = if (restored && measured && scroll.maxValue > 0) {
-                                        ((scroll.value.toFloat() / scroll.maxValue) * current.content.length).roundToInt()
-                                    } else {
-                                        speechPosition
-                                    }.coerceIn(0, current.content.length)
-                                    speechPosition = start
-                                    speechError = null
-                                    ttsController.speak(current.content, start)
+                                    val start = positionFromScroll()
+                                    manualPosition = start
+                                    NarrationClient.start(context, current.id, start, speechRate)
                                 }
                             }
                         ) {
@@ -361,21 +443,42 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                         Column(Modifier.weight(1f)) {
                             Text(
                                 when {
-                                    isSpeaking -> "Narrando"
-                                    ttsReady -> "Escuchar desde aquí"
-                                    else -> "Preparando voz…"
+                                    isSpeaking -> "Narrando en segundo plano"
+                                    activeBook -> "En pausa · toca para continuar"
+                                    else -> "Escuchar desde aquí"
                                 },
                                 style = MaterialTheme.typography.labelLarge
                             )
-                            Text("Voz del dispositivo · ${"%.1f".format(speechRate)}×", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                currentChapter?.title ?: "Voz del dispositivo",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
+                        if (activeBook) {
+                            IconButton(onClick = { NarrationClient.stop(context) }) {
+                                Icon(Icons.Default.Stop, "Detener narración")
+                            }
+                        }
+                    }
+
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         IconButton(onClick = {
                             speechRate = (speechRate - 0.1f).coerceAtLeast(0.6f)
+                            if (activeBook) NarrationClient.setRate(context, speechRate)
                         }) { Icon(Icons.Default.Remove, "Hablar más lento") }
                         Text("${"%.1f".format(speechRate)}×", style = MaterialTheme.typography.labelMedium)
                         IconButton(onClick = {
                             speechRate = (speechRate + 0.1f).coerceAtMost(1.8f)
+                            if (activeBook) NarrationClient.setRate(context, speechRate)
                         }) { Icon(Icons.Default.Add, "Hablar más rápido") }
+                        Spacer(Modifier.weight(1f))
+                        Text("$percentLabel%", style = MaterialTheme.typography.labelLarge)
                     }
 
                     HorizontalDivider()
@@ -385,7 +488,7 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                     ) {
                         TextButton(onClick = { fontSize = (fontSize - 1).coerceAtLeast(14f) }) { Text("A−") }
                         Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("$percentLabel%", style = MaterialTheme.typography.labelLarge)
+                            Text(current.author, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text("${fontSize.toInt()} sp", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         TextButton(onClick = { fontSize = (fontSize + 1).coerceAtMost(34f) }) { Text("A+") }
