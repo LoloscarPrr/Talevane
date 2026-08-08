@@ -1,5 +1,18 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application android:name=".TalevaneApp" android:allowBackup="true" android:label="Talevane" android:supportsRtl="true" android:theme="@style/Theme.Talevane">
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
+    <application
+        android:name=".TalevaneApp"
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="Talevane"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Talevane">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
