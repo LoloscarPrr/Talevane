@@ -38,6 +38,7 @@ import app.talevane.reader.data.*
 import app.talevane.reader.library.BookPresenter
 import app.talevane.reader.mood.MoodEngine
 import app.talevane.reader.mood.MoodSnapshot
+import app.talevane.reader.mood.ReadingMood
 import app.talevane.reader.speech.NarrationClient
 import app.talevane.reader.speech.NarrationService
 import kotlinx.coroutines.delay
@@ -51,7 +52,11 @@ private data class NarrationUiState(
     val rate: Float = 1.0f,
     val speaking: Boolean = false,
     val ready: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    val ambientVolume: Float = 0.30f,
+    val ambientActive: Boolean = false,
+    val mood: ReadingMood? = null,
+    val moodIntensity: Float = 0.15f
 )
 
 @Composable
@@ -121,7 +126,7 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
                         Row(verticalAlignment = Alignment.Bottom) {
                             Text("Talevane", style = MaterialTheme.typography.headlineLarge)
                             Spacer(Modifier.width(8.dp))
-                            Text("v0.5", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            Text("v0.6", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                         }
                         Text("Tus historias, llevadas a la vida.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -285,21 +290,30 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
     var narrationState by remember(current.id) { mutableStateOf(NarrationUiState(position = current.progressChars)) }
     var manualPosition by remember(current.id) { mutableIntStateOf(current.progressChars) }
     var speechRate by rememberSaveable(current.id) { mutableFloatStateOf(1.0f) }
+    var ambientVolume by rememberSaveable(current.id) { mutableFloatStateOf(0.30f) }
 
     DisposableEffect(current.id) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(receiverContext: Context?, intent: Intent?) {
                 if (intent?.action != NarrationService.ACTION_STATE) return
                 val stateBookId = intent.getLongExtra(NarrationService.EXTRA_BOOK_ID, -1L)
+                val mood = intent.getStringExtra(NarrationService.EXTRA_MOOD)?.let { value ->
+                    runCatching { ReadingMood.valueOf(value) }.getOrNull()
+                }
                 val state = NarrationUiState(
                     bookId = stateBookId,
                     position = intent.getIntExtra(NarrationService.EXTRA_POSITION, 0),
                     rate = intent.getFloatExtra(NarrationService.EXTRA_RATE, 1.0f),
                     speaking = intent.getBooleanExtra(NarrationService.EXTRA_SPEAKING, false),
                     ready = intent.getBooleanExtra(NarrationService.EXTRA_READY, false),
-                    error = intent.getStringExtra(NarrationService.EXTRA_ERROR)
+                    error = intent.getStringExtra(NarrationService.EXTRA_ERROR),
+                    ambientVolume = intent.getFloatExtra(NarrationService.EXTRA_AMBIENT_VOLUME, 0.30f),
+                    ambientActive = intent.getBooleanExtra(NarrationService.EXTRA_AMBIENT_ACTIVE, false),
+                    mood = mood,
+                    moodIntensity = intent.getFloatExtra(NarrationService.EXTRA_MOOD_INTENSITY, 0.15f)
                 )
                 narrationState = state
+                ambientVolume = state.ambientVolume
                 if (stateBookId == current.id) {
                     manualPosition = state.position.coerceIn(0, current.content.length)
                     speechRate = state.rate
@@ -360,13 +374,26 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
     val percentLabel = (readingPercent * 100).roundToInt()
     val currentChapter = chapters.lastOrNull { it.start <= activePosition } ?: chapters.firstOrNull()
 
-    var moodSnapshot by remember(current.id) {
+    var localMoodSnapshot by remember(current.id) {
         mutableStateOf(MoodEngine.analyze(current.content, current.progressChars))
     }
     val moodBucket = activePosition / 900
-    LaunchedEffect(current.id, moodBucket) {
-        moodSnapshot = MoodEngine.analyze(current.content, activePosition, moodSnapshot.mood)
+    LaunchedEffect(current.id, moodBucket, activeBook) {
+        if (!activeBook) {
+            localMoodSnapshot = MoodEngine.analyze(current.content, activePosition, localMoodSnapshot.mood)
+        }
     }
+
+    val moodSnapshot = if (activeBook && narrationState.mood != null) {
+        MoodSnapshot(
+            mood = narrationState.mood,
+            intensity = narrationState.moodIntensity,
+            confidence = 1f
+        )
+    } else {
+        localMoodSnapshot
+    }
+    val ambientIsPlaying = activeBook && narrationState.ambientActive
 
     fun positionFromScroll(): Int {
         return if (restored && measured && scroll.maxValue > 0 && current.content.isNotBlank()) {
@@ -484,7 +511,8 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                                 style = MaterialTheme.typography.labelLarge
                             )
                             Text(
-                                "Ambiente · ${moodSnapshot.mood.label}",
+                                if (ambientIsPlaying) "Ambiente · ${moodSnapshot.mood.label} · sonando"
+                                else "Ambiente · ${moodSnapshot.mood.label}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary,
                                 maxLines = 1,
@@ -510,6 +538,21 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                         Text("$percentLabel%", style = MaterialTheme.typography.labelLarge)
                     }
 
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 1.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.VolumeDown, "Bajar ambiente", modifier = Modifier.size(20.dp))
+                        Slider(
+                            value = ambientVolume,
+                            onValueChange = { ambientVolume = it },
+                            onValueChangeFinished = { NarrationClient.setAmbientVolume(context, ambientVolume) },
+                            valueRange = 0f..1f,
+                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                        )
+                        Text("${(ambientVolume * 100).roundToInt()}%", style = MaterialTheme.typography.labelMedium)
+                    }
+
                     HorizontalDivider()
                     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         TextButton(onClick = { fontSize = (fontSize - 1).coerceAtLeast(14f) }) { Text("A−") }
@@ -530,7 +573,7 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
             Spacer(Modifier.height(6.dp))
             Text(display.author, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(14.dp))
-            MoodCard(moodSnapshot)
+            MoodCard(moodSnapshot, ambientIsPlaying, ambientVolume)
             Spacer(Modifier.height(22.dp))
             Text(
                 current.content.ifBlank { "No se pudo extraer texto legible de este archivo." },
@@ -544,18 +587,27 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
 }
 
 @Composable
-private fun MoodCard(snapshot: MoodSnapshot) {
+private fun MoodCard(snapshot: MoodSnapshot, soundActive: Boolean, ambientVolume: Float) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.secondaryContainer
     ) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.AutoAwesome, null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
+            Icon(
+                if (soundActive) Icons.Default.GraphicEq else Icons.Default.AutoAwesome,
+                null,
+                tint = MaterialTheme.colorScheme.onSecondaryContainer
+            )
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Text("Ambiente · ${snapshot.mood.label}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSecondaryContainer)
-                Text(snapshot.mood.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.75f))
+                Text(
+                    if (soundActive) "Sonando al ${(ambientVolume * 100).roundToInt()}% · ${snapshot.mood.description}"
+                    else snapshot.mood.description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.75f)
+                )
             }
             Text("${snapshot.intensityPercent}%", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSecondaryContainer)
         }

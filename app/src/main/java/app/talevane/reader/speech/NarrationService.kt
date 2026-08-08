@@ -12,12 +12,20 @@ import android.os.IBinder
 import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.support.v4.media.MediaMetadataCompat
+import android.support.v4.media.session.MediaSessionCompat
+import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.media.app.NotificationCompat.MediaStyle
 import app.talevane.reader.MainActivity
 import app.talevane.reader.R
+import app.talevane.reader.audio.AmbientSoundEngine
 import app.talevane.reader.data.BookEntity
 import app.talevane.reader.data.TalevaneDatabase
+import app.talevane.reader.mood.MoodEngine
+import app.talevane.reader.mood.MoodSnapshot
+import app.talevane.reader.mood.ReadingMood
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -26,10 +34,6 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import android.support.v4.media.MediaMetadataCompat
-import android.support.v4.media.session.MediaSessionCompat
-import android.support.v4.media.session.PlaybackStateCompat
-import androidx.media.app.NotificationCompat.MediaStyle
 
 class NarrationService : Service(), TextToSpeech.OnInitListener {
 
@@ -41,6 +45,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_RESUME = "app.talevane.reader.action.NARRATION_RESUME"
         const val ACTION_STOP = "app.talevane.reader.action.NARRATION_STOP"
         const val ACTION_SET_RATE = "app.talevane.reader.action.NARRATION_RATE"
+        const val ACTION_SET_AMBIENT_VOLUME = "app.talevane.reader.action.AMBIENT_VOLUME"
         const val ACTION_QUERY = "app.talevane.reader.action.NARRATION_QUERY"
         const val ACTION_STATE = "app.talevane.reader.action.NARRATION_STATE"
 
@@ -52,9 +57,15 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         const val EXTRA_SPEAKING = "speaking"
         const val EXTRA_READY = "ready"
         const val EXTRA_ERROR = "error"
+        const val EXTRA_AMBIENT_VOLUME = "ambient_volume"
+        const val EXTRA_AMBIENT_ACTIVE = "ambient_active"
+        const val EXTRA_MOOD = "mood"
+        const val EXTRA_MOOD_INTENSITY = "mood_intensity"
 
         private const val CHANNEL_ID = "talevane_narration"
         private const val NOTIFICATION_ID = 4104
+        private const val PREFS_AUDIO = "talevane_audio"
+        private const val PREF_AMBIENT_VOLUME = "ambient_volume"
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -64,6 +75,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
 
     private var tts: TextToSpeech? = null
     private lateinit var mediaSession: MediaSessionCompat
+    private lateinit var ambientSound: AmbientSoundEngine
 
     private var ttsReady = false
     private var isSpeaking = false
@@ -74,12 +86,20 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
     private var currentContent = ""
     private var currentPosition = 0
     private var speechRate = 1.0f
+    private var ambientVolume = 0.30f
+    private var moodSnapshot = MoodSnapshot(ReadingMood.NEUTRAL, 0.15f, 0.25f)
+    private var lastMoodBucket = Int.MIN_VALUE
     private var lastUtteranceId: String? = null
     private var lastReportedPosition = 0
     private var lastError: String? = null
 
     override fun onCreate() {
         super.onCreate()
+        ambientVolume = getSharedPreferences(PREFS_AUDIO, MODE_PRIVATE)
+            .getFloat(PREF_AMBIENT_VOLUME, 0.30f)
+            .coerceIn(0f, 1f)
+        ambientSound = AmbientSoundEngine().apply { setVolume(ambientVolume) }
+
         createNotificationChannel()
         mediaSession = MediaSessionCompat(this, "TalevaneNarration").apply {
             setCallback(object : MediaSessionCompat.Callback() {
@@ -115,6 +135,20 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                 publishState()
                 refreshNotification()
             }
+            ACTION_SET_AMBIENT_VOLUME -> {
+                ambientVolume = intent.getFloatExtra(EXTRA_AMBIENT_VOLUME, ambientVolume).coerceIn(0f, 1f)
+                getSharedPreferences(PREFS_AUDIO, MODE_PRIVATE)
+                    .edit()
+                    .putFloat(PREF_AMBIENT_VOLUME, ambientVolume)
+                    .apply()
+                ambientSound.setVolume(ambientVolume)
+                if (isSpeaking && ambientVolume > 0f) {
+                    ambientSound.start(moodSnapshot.mood, moodSnapshot.intensity, ambientVolume)
+                }
+                publishState()
+                refreshNotification()
+                if (currentBookId < 0 && !isSpeaking) stopSelf(startId)
+            }
             ACTION_QUERY -> {
                 publishState()
                 if (currentBookId < 0 && !isSpeaking) stopSelf(startId)
@@ -128,6 +162,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         if (status != TextToSpeech.SUCCESS) {
             ttsReady = false
             lastError = "No se pudo iniciar la voz del dispositivo."
+            ambientSound.pause()
             publishState()
             refreshNotification()
             return
@@ -149,6 +184,10 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                 mainHandler.post {
                     isSpeaking = true
                     lastError = null
+                    updateAmbientMood(force = true)
+                    if (ambientVolume > 0f) {
+                        ambientSound.start(moodSnapshot.mood, moodSnapshot.intensity, ambientVolume)
+                    }
                     updatePlaybackState()
                     publishState()
                     refreshNotification()
@@ -160,12 +199,14 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                 if (chunk != null) {
                     currentPosition = chunk.end.coerceAtMost(currentContent.length)
                     lastReportedPosition = currentPosition
+                    updateAmbientMood()
                     persistPosition()
                 }
                 if (utteranceId != null && utteranceId == lastUtteranceId) {
                     mainHandler.post {
                         isSpeaking = false
                         pendingStart = false
+                        ambientSound.pause()
                         updatePlaybackState()
                         publishState()
                         refreshNotification()
@@ -177,6 +218,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                 mainHandler.post {
                     isSpeaking = false
                     pendingStart = false
+                    ambientSound.pause()
                     lastError = "La narración se detuvo por un error del motor de voz."
                     updatePlaybackState()
                     publishState()
@@ -187,6 +229,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
             override fun onStop(utteranceId: String?, interrupted: Boolean) {
                 mainHandler.post {
                     isSpeaking = false
+                    ambientSound.pause()
                     updatePlaybackState()
                     publishState()
                     refreshNotification()
@@ -199,10 +242,9 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                 if (absolute - lastReportedPosition >= 80) {
                     lastReportedPosition = absolute
                     currentPosition = absolute
+                    updateAmbientMood()
                     persistPosition()
-                    mainHandler.post {
-                        publishState()
-                    }
+                    mainHandler.post { publishState() }
                 }
             }
         })
@@ -223,6 +265,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                 if (book == null) {
                     lastError = "No se encontró el libro para narrar."
                     pendingStart = false
+                    ambientSound.pause()
                     publishState()
                     refreshNotification()
                     return@post
@@ -245,6 +288,9 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         currentContent = book.content
         currentPosition = requestedPosition.coerceIn(0, currentContent.length)
         lastReportedPosition = currentPosition
+        lastMoodBucket = Int.MIN_VALUE
+        moodSnapshot = MoodEngine.analyze(currentContent, currentPosition)
+        ambientSound.setMood(moodSnapshot.mood, moodSnapshot.intensity)
     }
 
     private fun speakCurrent() {
@@ -252,14 +298,17 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         if (!ttsReady || currentContent.isBlank()) return
 
         engine.stop()
+        ambientSound.pause()
         chunkPositions.clear()
         lastUtteranceId = null
         engine.setSpeechRate(speechRate)
+        updateAmbientMood(force = true)
 
         val chunks = buildChunks(currentContent, currentPosition)
         if (chunks.isEmpty()) {
             isSpeaking = false
             pendingStart = false
+            ambientSound.pause()
             publishState()
             refreshNotification()
             return
@@ -278,10 +327,23 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun updateAmbientMood(force: Boolean = false) {
+        if (currentContent.isBlank()) return
+        val bucket = currentPosition / 900
+        if (!force && bucket == lastMoodBucket) return
+        moodSnapshot = MoodEngine.analyze(currentContent, currentPosition, moodSnapshot.mood)
+        lastMoodBucket = bucket
+        ambientSound.setMood(moodSnapshot.mood, moodSnapshot.intensity)
+        if (isSpeaking && ambientVolume > 0f) {
+            ambientSound.start(moodSnapshot.mood, moodSnapshot.intensity, ambientVolume)
+        }
+    }
+
     private fun pauseNarration() {
         pendingStart = false
         tts?.stop()
         isSpeaking = false
+        ambientSound.pause()
         persistPosition()
         updatePlaybackState()
         publishState()
@@ -291,6 +353,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
     private fun resumeNarration() {
         if (currentBookId < 0 || currentContent.isBlank()) return
         pendingStart = true
+        updateAmbientMood(force = true)
         if (ttsReady) speakCurrent()
         publishState()
         refreshNotification()
@@ -300,6 +363,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         pendingStart = false
         tts?.stop()
         isSpeaking = false
+        ambientSound.pause()
         persistPosition()
         updatePlaybackState()
         publishState()
@@ -315,9 +379,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         val id = currentBookId
         val position = currentPosition
         if (id < 0) return
-        serviceScope.launch {
-            dao.updateProgress(id, position)
-        }
+        serviceScope.launch { dao.updateProgress(id, position) }
     }
 
     private fun buildChunks(text: String, startPosition: Int): List<SpeechChunk> {
@@ -348,7 +410,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                 "Narración de Talevane",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Controles para escuchar libros en segundo plano."
+                description = "Controles para narración y ambiente adaptativo de Talevane."
             }
         )
     }
@@ -359,9 +421,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
 
     private fun refreshNotification() {
         if (currentBookId < 0) return
-        runCatching {
-            NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification())
-        }
+        runCatching { NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification()) }
     }
 
     private fun buildNotification(): Notification {
@@ -395,8 +455,8 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
 
         val statusText = when {
             lastError != null -> lastError
-            isSpeaking -> "Narrando · ${"%.1f".format(speechRate)}×"
-            currentBookId >= 0 -> "En pausa · ${"%.1f".format(speechRate)}×"
+            isSpeaking -> "${moodSnapshot.mood.label} · ambiente ${(ambientVolume * 100).toInt()}% · ${"%.1f".format(speechRate)}×"
+            currentBookId >= 0 -> "En pausa · ${moodSnapshot.mood.label}"
             else -> "Preparando narración…"
         }
 
@@ -466,6 +526,10 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                 .putExtra(EXTRA_SPEAKING, isSpeaking)
                 .putExtra(EXTRA_READY, ttsReady)
                 .putExtra(EXTRA_ERROR, lastError)
+                .putExtra(EXTRA_AMBIENT_VOLUME, ambientVolume)
+                .putExtra(EXTRA_AMBIENT_ACTIVE, isSpeaking && ambientVolume > 0f)
+                .putExtra(EXTRA_MOOD, moodSnapshot.mood.name)
+                .putExtra(EXTRA_MOOD_INTENSITY, moodSnapshot.intensity)
         )
     }
 
@@ -473,6 +537,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         tts?.stop()
         tts?.shutdown()
         tts = null
+        ambientSound.release()
         mediaSession.release()
         chunkPositions.clear()
         serviceScope.cancel()

@@ -38,11 +38,29 @@ Turn books the user already owns into a private, immersive reading and listening
 - Background progress persistence.
 - First chapter / section detection and navigation.
 
+### v0.5 — Mood Engine
+- Local context analysis around the current reading position.
+- Stable mood states: Neutral, Calm, Reflective, Melancholy, Tension, Mystery, Action and Warmth.
+- Mood intensity surfaced in the reader.
+- Continue-reading library card and presentation cleanup.
+
+### v0.6 — Adaptive Soundtrack
+- Original procedural soundscapes generated locally; no external tracks required.
+- Mood Engine drives the background ambience while narration progresses.
+- Gradual crossfades between mood states.
+- Independent persistent ambience volume.
+- Ambience continues with background narration and lock-screen playback.
+
 ## Roadmap
-v0.5 Mood Engine
-v0.6 Adaptive soundtrack
 v0.7 Context AI and narration direction
-v0.8 Voice packs, highlighting and deeper audiobook controls
+v0.8 Voice packs, sentence highlighting and deeper audiobook controls
+v0.9 Cover art, richer metadata and library polish
+
+## Audio canon
+- Narration remains intelligible above ambience.
+- Background sound should be supportive, low-distraction and gradual.
+- A mood change does not require an immediate hard audio cut.
+- Offline procedural ambience is the baseline; future richer soundtrack sources must preserve a usable offline path.
 
 ## Canonical rule
 Future AI may analyze context for narration, mood and soundtrack systems, but must never rewrite, summarize over, or silently replace the source book text.

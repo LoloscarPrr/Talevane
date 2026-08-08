@@ -1,26 +1,29 @@
-# Talevane v0.4
+# Talevane v0.6
 
-Offline-first Android book reader foundation for a future AI-powered immersive reading experience.
+Offline-first Android book reader evolving into an immersive listening experience.
 
-## v0.4
-- Background narration with a foreground media service
-- Play / pause / stop from the system media notification
-- Media session integration for lock-screen and system playback controls
-- Narration continues when leaving the reader or locking the phone
-- Reading position saved by the background narration service
-- Adjustable narration speed from 0.6× to 1.8×
-- First chapter / section detector for imported books
-- Chapter navigator with approximate book position
-- Jumping chapters while narrating restarts narration at that section
-- Custom Talevane launcher icon and branded launch screen
+## v0.6 — Adaptive Soundtrack
+- Procedural ambient soundscapes generated locally inside the app
+- Mood-driven sound profiles for Neutral, Calm, Reflective, Melancholy, Tension, Mystery, Action and Warmth
+- Gradual crossfades when the Mood Engine changes state
+- Ambient audio continues with narration while the screen is locked
+- Independent ambience volume from 0% to 100%
+- Ambience volume persists between sessions
+- Reader UI explicitly shows when ambience is actually playing
+- No external music files, streaming service or network connection required
+
+## Existing foundation
 - Import EPUB, PDF and TXT
 - Local Room library and offline reading
-- Resume reading, progress bars, bookmarks and adjustable font size
-- Material 3 dark UI
-- No account, no subscription, no AI dependency
+- Resume reading and save progress
+- Background TextToSpeech narration
+- Lock-screen and notification media controls
+- Chapter / section navigation
+- Mood Engine based on nearby reading context
+- Talevane icon and Material 3 dark UI
 
-## Current narration scope
-v0.4 still uses the text-to-speech engine installed on the Android device. Voice packs, sentence highlighting, character voices, Mood Engine and adaptive soundtrack remain later milestones.
+## Current audio scope
+v0.6 uses the Android TextToSpeech engine for narration and an original procedural ambience engine for background sound. It does not yet use recorded orchestral tracks, character voice packs or AI narration direction.
 
 ## Canonical rule
-Future AI may analyze context for narration, mood and soundtrack systems, but must never rewrite the source book text.
+The original book text remains canonical. Context systems may analyze reading position and tone, but must never rewrite, summarize over or silently replace the source text.

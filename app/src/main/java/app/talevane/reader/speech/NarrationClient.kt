@@ -26,6 +26,14 @@ object NarrationClient {
         )
     }
 
+    fun setAmbientVolume(context: Context, volume: Float) {
+        context.startService(
+            Intent(context, NarrationService::class.java)
+                .setAction(NarrationService.ACTION_SET_AMBIENT_VOLUME)
+                .putExtra(NarrationService.EXTRA_AMBIENT_VOLUME, volume.coerceIn(0f, 1f))
+        )
+    }
+
     fun query(context: Context) {
         context.startService(
             Intent(context, NarrationService::class.java)
