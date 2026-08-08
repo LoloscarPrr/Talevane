@@ -27,7 +27,6 @@ object BookPresenter {
 
     fun cleanTitle(value: String): String {
         var result = value
-            .substringBeforeLast('.', value)
             .replace(Regex("[_-]+"), " ")
             .replace(Regex("\\s+"), " ")
             .trim()
