@@ -1,29 +1,27 @@
-# Talevane v0.6
+# Talevane v0.6.1
 
 Offline-first Android book reader evolving into an immersive listening experience.
 
-## v0.6 — Adaptive Soundtrack
-- Procedural ambient soundscapes generated locally inside the app
-- Mood-driven sound profiles for Neutral, Calm, Reflective, Melancholy, Tension, Mystery, Action and Warmth
-- Gradual crossfades when the Mood Engine changes state
-- Ambient audio continues with narration while the screen is locked
-- Independent ambience volume from 0% to 100%
-- Ambience volume persists between sessions
-- Reader UI explicitly shows when ambience is actually playing
-- No external music files, streaming service or network connection required
+## v0.6.1 — Reading Continuity & Voice
+- Resume from the beginning of the last paragraph or nearest reliable text block
+- Exact progress still persists independently for every book
+- Per-book narration preference: Automatic, Masculine, Feminine or System
+- Automatic author profile is conservative: when Talevane cannot infer it reliably, it keeps the system voice
+- Voice preference persists locally without changing the Room library schema
+- Narration applies the selected profile while retaining speed controls and adaptive ambience
 
 ## Existing foundation
 - Import EPUB, PDF and TXT
 - Local Room library and offline reading
-- Resume reading and save progress
 - Background TextToSpeech narration
 - Lock-screen and notification media controls
 - Chapter / section navigation
 - Mood Engine based on nearby reading context
+- Procedural adaptive soundtrack with independent ambience volume
 - Talevane icon and Material 3 dark UI
 
-## Current audio scope
-v0.6 uses the Android TextToSpeech engine for narration and an original procedural ambience engine for background sound. It does not yet use recorded orchestral tracks, character voice packs or AI narration direction.
+## Current voice scope
+Android TTS engines do not expose a universal reliable gender label for every installed voice. Talevane therefore uses tagged voices when an engine provides that metadata and otherwise applies a conservative voice profile. The user can always override the automatic choice per book.
 
 ## Canonical rule
 The original book text remains canonical. Context systems may analyze reading position and tone, but must never rewrite, summarize over or silently replace the source text.
