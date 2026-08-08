@@ -131,7 +131,10 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                 ensureForeground()
                 loadAndStart(bookId, position)
             }
-            ACTION_PAUSE -> pauseNarration()
+            ACTION_PAUSE -> {
+                pauseNarration()
+                if (currentBookId < 0 && !isSpeaking) stopSelf(startId)
+            }
             ACTION_RESUME -> resumeNarration()
             ACTION_STOP -> stopNarration(removeNotification = true)
             ACTION_SET_RATE -> {
@@ -322,7 +325,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
 
     private fun applyVoiceProfile() {
         val engine = tts ?: return
-        val result = AuthorVoiceProfile.apply(engine, defaultVoice, currentVoiceMode, currentAuthor)
+        val result = AuthorVoiceProfile.apply(this, engine, defaultVoice, currentVoiceMode, currentAuthor, currentBookId)
         voiceProfileLabel = result.label
     }
 

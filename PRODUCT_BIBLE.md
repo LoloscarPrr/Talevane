@@ -51,6 +51,16 @@ Turn books the user already owns into a private, immersive reading and listening
 - Independent persistent ambience volume.
 - Ambience continues with background narration and lock-screen playback.
 
+### v0.6.1 — Reading continuity + voice profile
+- Resume from the beginning of the last paragraph/block while retaining precise progress.
+- Per-book Auto / Masculine / Feminine / System narration preference.
+
+### v0.6.2 — Voice Lab
+- Masculine/Feminine selection uses actual voices reported by the installed Android TTS engine.
+- Users can preview voices before saving one for a book.
+- Gender-tag matching uses token boundaries; `female` must never be misclassified as `male`.
+- Pitch-only changes are a labelled last-resort approximation, never presented as a confirmed speaker sex.
+
 ## Roadmap
 v0.7 Context AI and narration direction
 v0.8 Voice packs, sentence highlighting and deeper audiobook controls
@@ -61,6 +71,7 @@ v0.9 Cover art, richer metadata and library polish
 - Background sound should be supportive, low-distraction and gradual.
 - A mood change does not require an immediate hard audio cut.
 - Offline procedural ambience is the baseline; future richer soundtrack sources must preserve a usable offline path.
+- Never claim a speaker sex from pitch alone. Prefer a real installed voice selected or explicitly identified by the TTS engine.
 
 ## Canonical rule
 Future AI may analyze context for narration, mood and soundtrack systems, but must never rewrite, summarize over, or silently replace the source book text.

@@ -18,6 +18,8 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Talevane">
 
+        <activity android:name=".speech.VoiceLabActivity" android:exported="false" />
+
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
