@@ -34,6 +34,16 @@ object NarrationClient {
         )
     }
 
+    fun setVoiceMode(context: Context, bookId: Long, mode: VoiceMode) {
+        VoicePreferenceStore.set(context, bookId, mode)
+        context.startService(
+            Intent(context, NarrationService::class.java)
+                .setAction(NarrationService.ACTION_SET_VOICE_MODE)
+                .putExtra(NarrationService.EXTRA_BOOK_ID, bookId)
+                .putExtra(NarrationService.EXTRA_VOICE_MODE, mode.name)
+        )
+    }
+
     fun query(context: Context) {
         context.startService(
             Intent(context, NarrationService::class.java)
