@@ -1,11 +1,16 @@
-# Talevane v0.1
+# Talevane v0.2
 
 Offline-first Android book reader foundation for a future AI-powered immersive reading experience.
 
-## v0.1
+## v0.2
 - Import EPUB, PDF and TXT
 - Local Room library
-- Reading progress
+- Resume reading from the saved position
+- Live reading percentage and progress bars
+- Improved library cards
+- Better title cleanup for imported files
+- Basic PDF/TXT metadata detection when the document starts with author and title
+- EPUB title and author metadata
 - Bookmarks
 - Adjustable font size
 - Material 3 dark UI
