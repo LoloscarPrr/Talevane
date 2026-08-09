@@ -131,7 +131,7 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
                         Row(verticalAlignment = Alignment.Bottom) {
                             Text("Talevane", style = MaterialTheme.typography.headlineLarge)
                             Spacer(Modifier.width(8.dp))
-                            Text("v0.6.2", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            Text("v0.6.3", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                         }
                         Text("Tus historias, llevadas a la vida.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -542,8 +542,8 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                                 style = MaterialTheme.typography.labelLarge
                             )
                             Text(
-                                if (ambientIsPlaying) "Ambiente · ${moodSnapshot.mood.label} · sonando"
-                                else "Ambiente · ${moodSnapshot.mood.label}",
+                                if (ambientIsPlaying) "Música · ${moodSnapshot.mood.label} · sonando"
+                                else "Música · ${moodSnapshot.mood.label}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary,
                                 maxLines = 1,
@@ -607,7 +607,7 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                         Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 1.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.VolumeDown, "Bajar ambiente", modifier = Modifier.size(20.dp))
+                        Icon(Icons.Default.VolumeDown, "Volumen de música", modifier = Modifier.size(20.dp))
                         Slider(
                             value = ambientVolume,
                             onValueChange = { ambientVolume = it },
