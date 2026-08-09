@@ -62,12 +62,10 @@ Turn books the user already owns into a private, immersive reading and listening
 - Pitch-only changes are a labelled last-resort approximation, never presented as a confirmed speaker sex.
 
 ### v0.6.3 — Musical Soundtrack
-- Adaptive audio is now explicitly musical rather than primarily drone/noise based.
+- Adaptive audio is explicitly musical rather than primarily drone/noise based.
 - Each mood defines a tonal centre, scale, chord progression, tempo, arpeggio and melodic motif.
 - Bass and selective procedural percussion add musical structure without overpowering narration.
-- Noise is retained only as subtle texture/percussion where appropriate.
 - Music is generated locally from synthesis; no external songs or copyrighted samples are bundled.
-- Mood changes retain gradual crossfades and the independent soundtrack volume control.
 
 ### v0.6.4 — Book Structure & Fast Import
 - File parsing/import runs away from the UI thread and provides immediate loading feedback.
@@ -76,6 +74,13 @@ Turn books the user already owns into a private, immersive reading and listening
 - Likely table-of-contents duplicates are de-duplicated toward later real section occurrences.
 - Narration started before the detected reading start jumps to the first reading section instead of reciting publisher/edition metadata.
 - Structure analysis never edits, trims or replaces the canonical extracted source text.
+
+### v0.6.4.1 — Virtualized long-book reader
+- Long source text must not be laid out as one giant UI text node.
+- Reader content is virtualized into canonical-position chunks so only visible/nearby text is composed.
+- Structure/chunk preparation runs off the UI thread.
+- Freshly imported books may be handed directly from memory to avoid an unnecessary immediate full database read.
+- Chapter jumps, progress and narration-follow behavior retain canonical character-position mapping.
 
 ## Roadmap
 v0.7 Context AI and narration direction
@@ -94,6 +99,10 @@ v0.9 Cover art, richer metadata and library polish
 - Front matter may remain visible to the reader, but narration should not treat publisher/edition metadata as the narrative beginning by default.
 - Chapter and reading-start detection must be represented as positions into canonical text, never by rewriting the book.
 - Heuristic structure detection must fail conservatively when confidence is low.
+
+## Performance canon
+- Large books must open without requiring the entire text to be measured or laid out on the UI thread.
+- Background preparation must preserve responsiveness and expose a visible loading/error state.
 
 ## Canonical rule
 Future AI may analyze context for narration, structure, mood and soundtrack systems, but must never rewrite, summarize over, or silently replace the source book text.
