@@ -69,6 +69,14 @@ Turn books the user already owns into a private, immersive reading and listening
 - Music is generated locally from synthesis; no external songs or copyrighted samples are bundled.
 - Mood changes retain gradual crossfades and the independent soundtrack volume control.
 
+### v0.6.4 — Book Structure & Fast Import
+- File parsing/import runs away from the UI thread and provides immediate loading feedback.
+- Local structure analysis distinguishes likely front matter from the beginning of meaningful reading content.
+- Chapter/section detection supports explicit headings, Roman numerals, numbered headings and title-like isolated headings.
+- Likely table-of-contents duplicates are de-duplicated toward later real section occurrences.
+- Narration started before the detected reading start jumps to the first reading section instead of reciting publisher/edition metadata.
+- Structure analysis never edits, trims or replaces the canonical extracted source text.
+
 ## Roadmap
 v0.7 Context AI and narration direction
 v0.8 Voice packs, sentence highlighting and deeper audiobook controls
@@ -82,5 +90,10 @@ v0.9 Cover art, richer metadata and library polish
 - Future richer soundtrack sources must preserve a usable offline path.
 - Never claim a speaker sex from pitch alone. Prefer a real installed voice selected or explicitly identified by the TTS engine.
 
+## Structure canon
+- Front matter may remain visible to the reader, but narration should not treat publisher/edition metadata as the narrative beginning by default.
+- Chapter and reading-start detection must be represented as positions into canonical text, never by rewriting the book.
+- Heuristic structure detection must fail conservatively when confidence is low.
+
 ## Canonical rule
-Future AI may analyze context for narration, mood and soundtrack systems, but must never rewrite, summarize over, or silently replace the source book text.
+Future AI may analyze context for narration, structure, mood and soundtrack systems, but must never rewrite, summarize over, or silently replace the source book text.

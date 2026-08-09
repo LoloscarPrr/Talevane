@@ -34,6 +34,7 @@ import androidx.core.content.ContextCompat
 import app.talevane.reader.R
 import app.talevane.reader.chapters.BookChapter
 import app.talevane.reader.chapters.ChapterDetector
+import app.talevane.reader.chapters.BookStructureAnalyzer
 import app.talevane.reader.data.*
 import app.talevane.reader.library.BookPresenter
 import app.talevane.reader.mood.MoodEngine
@@ -83,14 +84,35 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
     val books by repository.books.collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
     var error by remember { mutableStateOf<String?>(null) }
+    var importing by remember { mutableStateOf(false) }
     val continueBook = books.firstOrNull { progressOf(it) in 0.001f..0.979f }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        if (uri != null) scope.launch {
-            runCatching { repository.import(uri) }
-                .onSuccess { openBook(it) }
-                .onFailure { error = it.message ?: "No se pudo importar el libro." }
+        if (uri != null) {
+            importing = true
+            scope.launch {
+                val result = runCatching { repository.import(uri) }
+                importing = false
+                result
+                    .onSuccess { openBook(it) }
+                    .onFailure { error = it.message ?: "No se pudo importar el libro." }
+            }
         }
+    }
+
+    if (importing) {
+        AlertDialog(
+            onDismissRequest = {},
+            confirmButton = {},
+            title = { Text("Importando libro…") },
+            text = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(26.dp), strokeWidth = 3.dp)
+                    Spacer(Modifier.width(14.dp))
+                    Text("Analizando el archivo y preparando la lectura. Puedes esperar aquí.")
+                }
+            }
+        )
     }
 
     Scaffold(
@@ -131,7 +153,7 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
                         Row(verticalAlignment = Alignment.Bottom) {
                             Text("Talevane", style = MaterialTheme.typography.headlineLarge)
                             Spacer(Modifier.width(8.dp))
-                            Text("v0.6.3", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            Text("v0.6.4", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                         }
                         Text("Tus historias, llevadas a la vida.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -292,7 +314,8 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
         CircularProgressIndicator()
     }
     val display = remember(current.title, current.author) { BookPresenter.present(current) }
-    val chapters = remember(current.content) { ChapterDetector.detect(current.content) }
+    val structure = remember(current.content) { BookStructureAnalyzer.analyze(current.content) }
+    val chapters = structure.chapters
     val initialResumePosition = remember(current.id, current.progressChars) {
         ReadingPositionResolver.resumeStart(current.content, current.progressChars)
     }
@@ -391,7 +414,7 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
     val readingPercent = if (current.content.isBlank()) 0f else
         (activePosition.toFloat() / current.content.length).coerceIn(0f, 1f)
     val percentLabel = (readingPercent * 100).roundToInt()
-    val currentChapter = chapters.lastOrNull { it.start <= activePosition } ?: chapters.firstOrNull()
+    val currentChapter = chapters.lastOrNull { it.start <= activePosition }
 
     var localMoodSnapshot by remember(current.id) {
         mutableStateOf(MoodEngine.analyze(current.content, current.progressChars))
@@ -452,7 +475,7 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
         ModalBottomSheet(onDismissRequest = { showChapters = false }) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
                 Text("Capítulos", style = MaterialTheme.typography.headlineSmall)
-                Text("${chapters.size} secciones detectadas", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("${chapters.size} capítulos / secciones detectados", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(12.dp))
                 LazyColumn(Modifier.fillMaxWidth().heightIn(max = 520.dp)) {
                     items(chapters, key = { it.start }) { chapter ->
@@ -523,8 +546,15 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                                 if (isSpeaking) {
                                     NarrationClient.pause(context)
                                 } else {
-                                    val start = positionFromScroll()
+                                    val rawStart = positionFromScroll()
+                                    val start = if (rawStart < structure.readingStart) structure.readingStart else rawStart
                                     manualPosition = start
+                                    if (start != rawStart && measured && scroll.maxValue > 0 && current.content.isNotBlank()) {
+                                        scope.launch {
+                                            val fraction = start.toFloat() / current.content.length
+                                            scroll.scrollTo((fraction * scroll.maxValue).roundToInt())
+                                        }
+                                    }
                                     NarrationClient.start(context, current.id, start, speechRate)
                                 }
                             }
