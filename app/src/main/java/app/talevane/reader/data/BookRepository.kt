@@ -9,20 +9,28 @@ import kotlinx.coroutines.withContext
 class BookRepository(private val context: Context, private val dao: BookDao) {
     val books: Flow<List<BookEntity>> = dao.observeAll()
 
+    @Volatile
+    private var recentImportedBook: BookEntity? = null
+
     suspend fun import(uri: Uri): Long = withContext(Dispatchers.IO) {
         val imported = Importers.import(context, uri)
-        dao.insert(
-            BookEntity(
-                title = imported.title,
-                author = imported.author,
-                format = imported.format,
-                sourceName = imported.sourceName,
-                content = imported.content
-            )
+        val pending = BookEntity(
+            title = imported.title,
+            author = imported.author,
+            format = imported.format,
+            sourceName = imported.sourceName,
+            content = imported.content
         )
+        val id = dao.insert(pending)
+        recentImportedBook = pending.copy(id = id)
+        id
     }
 
-    suspend fun get(id: Long) = dao.get(id)
+    suspend fun get(id: Long): BookEntity? {
+        recentImportedBook?.takeIf { it.id == id }?.let { return it }
+        return withContext(Dispatchers.IO) { dao.get(id) }
+    }
+
     suspend fun saveProgress(id: Long, position: Int) = dao.updateProgress(id, position)
     suspend fun toggleBookmark(book: BookEntity) = dao.setBookmark(book.id, !book.bookmarked)
 }
