@@ -61,16 +61,25 @@ Turn books the user already owns into a private, immersive reading and listening
 - Gender-tag matching uses token boundaries; `female` must never be misclassified as `male`.
 - Pitch-only changes are a labelled last-resort approximation, never presented as a confirmed speaker sex.
 
+### v0.6.3 — Musical Soundtrack
+- Adaptive audio is now explicitly musical rather than primarily drone/noise based.
+- Each mood defines a tonal centre, scale, chord progression, tempo, arpeggio and melodic motif.
+- Bass and selective procedural percussion add musical structure without overpowering narration.
+- Noise is retained only as subtle texture/percussion where appropriate.
+- Music is generated locally from synthesis; no external songs or copyrighted samples are bundled.
+- Mood changes retain gradual crossfades and the independent soundtrack volume control.
+
 ## Roadmap
 v0.7 Context AI and narration direction
 v0.8 Voice packs, sentence highlighting and deeper audiobook controls
 v0.9 Cover art, richer metadata and library polish
 
 ## Audio canon
-- Narration remains intelligible above ambience.
-- Background sound should be supportive, low-distraction and gradual.
+- Narration remains intelligible above the soundtrack.
+- Background music should be supportive, low-distraction and gradual.
 - A mood change does not require an immediate hard audio cut.
-- Offline procedural ambience is the baseline; future richer soundtrack sources must preserve a usable offline path.
+- The offline baseline must provide actual tonal/musical structure, not depend primarily on noise or a continuous drone.
+- Future richer soundtrack sources must preserve a usable offline path.
 - Never claim a speaker sex from pitch alone. Prefer a real installed voice selected or explicitly identified by the TTS engine.
 
 ## Canonical rule
