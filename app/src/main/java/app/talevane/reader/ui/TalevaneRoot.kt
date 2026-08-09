@@ -11,9 +11,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.BookmarkBorder
@@ -34,22 +34,32 @@ import androidx.core.content.ContextCompat
 import app.talevane.reader.R
 import app.talevane.reader.chapters.BookChapter
 import app.talevane.reader.chapters.ChapterDetector
+import app.talevane.reader.chapters.BookStructure
 import app.talevane.reader.chapters.BookStructureAnalyzer
 import app.talevane.reader.data.*
 import app.talevane.reader.library.BookPresenter
 import app.talevane.reader.mood.MoodEngine
 import app.talevane.reader.mood.MoodSnapshot
 import app.talevane.reader.mood.ReadingMood
+import app.talevane.reader.reading.ReadingChunk
+import app.talevane.reader.reading.ReadingChunker
 import app.talevane.reader.reading.ReadingPositionResolver
 import app.talevane.reader.speech.AuthorVoiceProfile
 import app.talevane.reader.speech.NarrationClient
 import app.talevane.reader.speech.NarrationService
 import app.talevane.reader.speech.VoiceMode
 import app.talevane.reader.speech.VoicePreferenceStore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
+
+private data class ReaderPrepared(
+    val structure: BookStructure,
+    val chunks: List<ReadingChunk>
+)
 
 private data class NarrationUiState(
     val bookId: Long = -1L,
@@ -153,7 +163,7 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
                         Row(verticalAlignment = Alignment.Bottom) {
                             Text("Talevane", style = MaterialTheme.typography.headlineLarge)
                             Spacer(Modifier.width(8.dp))
-                            Text("v0.6.4", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            Text("v0.6.4.1", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                         }
                         Text("Tus historias, llevadas a la vida.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -307,14 +317,63 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
     var restored by remember(bookId) { mutableStateOf(false) }
     var showChapters by rememberSaveable { mutableStateOf(false) }
     var showVoiceMenu by rememberSaveable { mutableStateOf(false) }
-    val scroll = rememberScrollState()
+    val listState = rememberLazyListState()
+    var loadError by remember(bookId) { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(bookId) { book = repository.get(bookId) }
+    LaunchedEffect(bookId) {
+        runCatching { repository.get(bookId) }
+            .onSuccess { loaded ->
+                book = loaded
+                if (loaded == null) loadError = "No se encontró el libro en la biblioteca."
+            }
+            .onFailure { loadError = it.message ?: "No se pudo abrir el libro." }
+    }
     val current = book ?: return Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-        CircularProgressIndicator()
+        if (loadError == null) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator()
+                Spacer(Modifier.height(12.dp))
+                Text("Abriendo libro…")
+            }
+        } else {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Default.ErrorOutline, null, tint = MaterialTheme.colorScheme.error)
+                Spacer(Modifier.height(10.dp))
+                Text(loadError!!, color = MaterialTheme.colorScheme.error)
+                TextButton(onClick = back) { Text("Volver") }
+            }
+        }
     }
     val display = remember(current.title, current.author) { BookPresenter.present(current) }
-    val structure = remember(current.content) { BookStructureAnalyzer.analyze(current.content) }
+    var prepared by remember(current.id) { mutableStateOf<ReaderPrepared?>(null) }
+    var preparationError by remember(current.id) { mutableStateOf<String?>(null) }
+    LaunchedEffect(current.id, current.content) {
+        runCatching {
+            withContext(Dispatchers.Default) {
+                ReaderPrepared(
+                    structure = BookStructureAnalyzer.analyze(current.content),
+                    chunks = ReadingChunker.chunk(current.content)
+                )
+            }
+        }.onSuccess { prepared = it }
+            .onFailure { preparationError = it.message ?: "No se pudo preparar la lectura." }
+    }
+    val readerPrepared = prepared ?: return Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+        if (preparationError == null) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator()
+                Spacer(Modifier.height(12.dp))
+                Text("Preparando páginas…")
+            }
+        } else {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(preparationError!!, color = MaterialTheme.colorScheme.error)
+                TextButton(onClick = back) { Text("Volver") }
+            }
+        }
+    }
+    val structure = readerPrepared.structure
+    val chunks = readerPrepared.chunks
     val chapters = structure.chapters
     val initialResumePosition = remember(current.id, current.progressChars) {
         ReadingPositionResolver.resumeStart(current.content, current.progressChars)
@@ -373,43 +432,40 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
     val isSpeaking = activeBook && narrationState.speaking
     val speechError = if (activeBook) narrationState.error else null
 
-    LaunchedEffect(current.id, scroll.maxValue) {
-        val measured = scroll.maxValue != Int.MAX_VALUE
-        if (!restored && measured && scroll.maxValue >= 0 && current.content.isNotBlank()) {
+    LaunchedEffect(current.id, chunks.size, activeBook, isSpeaking) {
+        if (!restored && chunks.isNotEmpty() && current.content.isNotBlank()) {
             val rawSavedPosition = if (activeBook) narrationState.position else current.progressChars
             val savedPosition = if (isSpeaking) {
                 rawSavedPosition.coerceIn(0, current.content.length)
             } else {
                 ReadingPositionResolver.resumeStart(current.content, rawSavedPosition)
             }
-            val savedFraction = (savedPosition.toFloat() / current.content.length).coerceIn(0f, 1f)
-            scroll.scrollTo((savedFraction * scroll.maxValue).roundToInt())
+            val itemIndex = if (savedPosition <= 0) 0 else ReadingChunker.indexForPosition(chunks, savedPosition) + 1
+            listState.scrollToItem(itemIndex)
             manualPosition = savedPosition.coerceIn(0, current.content.length)
             restored = true
         }
     }
 
-    LaunchedEffect(current.id) {
-        snapshotFlow { scroll.value }.collectLatest { value ->
-            val measured = scroll.maxValue != Int.MAX_VALUE
-            if (!restored || !measured || scroll.maxValue <= 0 || current.content.isBlank() || isSpeaking) return@collectLatest
+    LaunchedEffect(current.id, restored, isSpeaking, chunks.size) {
+        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }.collectLatest { (itemIndex, _) ->
+            if (!restored || current.content.isBlank() || isSpeaking) return@collectLatest
             delay(350)
-            val fraction = (value.toFloat() / scroll.maxValue).coerceIn(0f, 1f)
-            val position = (fraction * current.content.length).roundToInt()
-            manualPosition = position
-            repository.saveProgress(current.id, position)
+            val position = if (itemIndex <= 0) 0 else {
+                chunks.getOrNull(itemIndex - 1)?.start ?: current.content.length
+            }
+            manualPosition = position.coerceIn(0, current.content.length)
+            repository.saveProgress(current.id, manualPosition)
         }
     }
 
-    LaunchedEffect(narrationState.position, isSpeaking, restored, scroll.maxValue) {
-        val measured = scroll.maxValue != Int.MAX_VALUE
-        if (isSpeaking && restored && measured && scroll.maxValue > 0 && current.content.isNotBlank()) {
-            val fraction = (narrationState.position.toFloat() / current.content.length).coerceIn(0f, 1f)
-            scroll.scrollTo((fraction * scroll.maxValue).roundToInt())
+    LaunchedEffect(narrationState.position, isSpeaking, restored, chunks.size) {
+        if (isSpeaking && restored && chunks.isNotEmpty() && current.content.isNotBlank()) {
+            val index = ReadingChunker.indexForPosition(chunks, narrationState.position)
+            listState.scrollToItem(index + 1)
         }
     }
 
-    val measured = scroll.maxValue != Int.MAX_VALUE
     val activePosition = if (isSpeaking) narrationState.position else manualPosition
     val readingPercent = if (current.content.isBlank()) 0f else
         (activePosition.toFloat() / current.content.length).coerceIn(0f, 1f)
@@ -450,20 +506,19 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
     }
 
     fun positionFromScroll(): Int {
-        return if (restored && measured && scroll.maxValue > 0 && current.content.isNotBlank()) {
-            ((scroll.value.toFloat() / scroll.maxValue) * current.content.length).roundToInt()
-        } else {
-            manualPosition
-        }.coerceIn(0, current.content.length)
+        if (!restored || chunks.isEmpty()) return manualPosition.coerceIn(0, current.content.length)
+        val itemIndex = listState.firstVisibleItemIndex
+        val position = if (itemIndex <= 0) manualPosition else chunks.getOrNull(itemIndex - 1)?.start ?: manualPosition
+        return position.coerceIn(0, current.content.length)
     }
 
     fun jumpToChapter(chapter: BookChapter) {
         val position = chapter.start.coerceIn(0, current.content.length)
         manualPosition = position
         scope.launch {
-            if (measured && scroll.maxValue >= 0 && current.content.isNotBlank()) {
-                val fraction = position.toFloat() / current.content.length
-                scroll.scrollTo((fraction * scroll.maxValue).roundToInt())
+            if (chunks.isNotEmpty() && current.content.isNotBlank()) {
+                val index = ReadingChunker.indexForPosition(chunks, position)
+                listState.scrollToItem(index + 1)
             }
             repository.saveProgress(current.id, position)
         }
@@ -549,10 +604,10 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                                     val rawStart = positionFromScroll()
                                     val start = if (rawStart < structure.readingStart) structure.readingStart else rawStart
                                     manualPosition = start
-                                    if (start != rawStart && measured && scroll.maxValue > 0 && current.content.isNotBlank()) {
+                                    if (start != rawStart && chunks.isNotEmpty() && current.content.isNotBlank()) {
                                         scope.launch {
-                                            val fraction = start.toFloat() / current.content.length
-                                            scroll.scrollTo((fraction * scroll.maxValue).roundToInt())
+                                            val index = ReadingChunker.indexForPosition(chunks, start)
+                                            listState.scrollToItem(index + 1)
                                         }
                                     }
                                     NarrationClient.start(context, current.id, start, speechRate)
@@ -661,22 +716,42 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
             }
         }
     ) { padding ->
-        Column(
-            Modifier.fillMaxSize().padding(padding).verticalScroll(scroll).padding(horizontal = 24.dp, vertical = 20.dp)
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(horizontal = 24.dp, vertical = 20.dp)
         ) {
-            Text(display.title, style = MaterialTheme.typography.headlineMedium, fontFamily = FontFamily.Serif)
-            Spacer(Modifier.height(6.dp))
-            Text(display.author, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(14.dp))
-            MoodCard(moodSnapshot, ambientIsPlaying, ambientVolume)
-            Spacer(Modifier.height(22.dp))
-            Text(
-                current.content.ifBlank { "No se pudo extraer texto legible de este archivo." },
-                fontSize = fontSize.sp,
-                lineHeight = (fontSize * 1.55f).sp,
-                fontFamily = FontFamily.Serif
-            )
-            Spacer(Modifier.height(80.dp))
+            item(key = "reader-header") {
+                Column {
+                    Text(display.title, style = MaterialTheme.typography.headlineMedium, fontFamily = FontFamily.Serif)
+                    Spacer(Modifier.height(6.dp))
+                    Text(display.author, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(14.dp))
+                    MoodCard(moodSnapshot, ambientIsPlaying, ambientVolume)
+                    Spacer(Modifier.height(22.dp))
+                }
+            }
+
+            if (chunks.isEmpty()) {
+                item(key = "empty-text") {
+                    Text("No se pudo extraer texto legible de este archivo.")
+                }
+            } else {
+                itemsIndexed(
+                    items = chunks,
+                    key = { _, chunk -> chunk.start }
+                ) { index, chunk ->
+                    Text(
+                        chunk.text,
+                        fontSize = fontSize.sp,
+                        lineHeight = (fontSize * 1.55f).sp,
+                        fontFamily = FontFamily.Serif
+                    )
+                    if (index != chunks.lastIndex) Spacer(Modifier.height(12.dp))
+                }
+            }
+
+            item(key = "reader-footer") { Spacer(Modifier.height(80.dp)) }
         }
     }
 }
@@ -696,7 +771,7 @@ private fun MoodCard(snapshot: MoodSnapshot, soundActive: Boolean, ambientVolume
             )
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text("Ambiente · ${snapshot.mood.label}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                Text("Música · ${snapshot.mood.label}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSecondaryContainer)
                 Text(
                     if (soundActive) "Sonando al ${(ambientVolume * 100).roundToInt()}% · ${snapshot.mood.description}"
                     else snapshot.mood.description,
