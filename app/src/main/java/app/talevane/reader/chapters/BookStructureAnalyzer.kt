@@ -32,7 +32,7 @@ object BookStructureAnalyzer {
         RegexOption.IGNORE_CASE
     )
     private val romanHeading = Regex("^[IVXLCDM]{1,8}[.)-]?$", RegexOption.IGNORE_CASE)
-    private val numericHeading = Regex("^\\d{1,3}[.)-]$")
+    private val numericHeading = Regex("^\\d{1,3}[.)-]?$")
 
     private val frontMatterTerms = listOf(
         "editorial", "edicion", "edición", "copyright", "derechos reservados", "isbn",
@@ -46,13 +46,14 @@ object BookStructureAnalyzer {
     private val indexTerms = setOf(
         "indice", "índice", "contenido", "contenidos", "contents", "table of contents", "sumario"
     )
+    private val normalizedIndexTerms = indexTerms.map(::normalize).toSet()
 
     fun analyze(content: String): BookStructure {
         if (content.isBlank()) return BookStructure(emptyList(), 0)
 
         val lines = lines(content)
         val candidates = lines.mapNotNull(::candidate)
-            .filterNot { isFrontMatter(it.title) || normalize(it.title) in indexTerms.map(::normalize).toSet() }
+            .filterNot { isFrontMatter(it.title) || normalize(it.title) in normalizedIndexTerms }
 
         if (candidates.isEmpty()) {
             val fallback = fallbackReadingStart(lines, content.length)
@@ -164,7 +165,7 @@ object BookStructureAnalyzer {
     private fun isFrontMatter(value: String): Boolean {
         val normalized = normalize(value)
         if (normalized.isBlank()) return true
-        if (normalized in indexTerms.map(::normalize).toSet()) return true
+        if (normalized in normalizedIndexTerms) return true
         return frontMatterTerms.any { term -> normalized.contains(normalize(term)) }
     }
 
