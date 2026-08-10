@@ -91,6 +91,12 @@ Turn books the user already owns into a private, immersive reading and listening
 - Provider-neutral neural narrator interfaces are now part of the architecture.
 - v0.6.5 does not embed provider API keys and does not send source-book text to an external service.
 
+### v0.6.5.1 — Audio balance & narration cadence
+- Piano must remain clearly audible beneath speech at normal slider positions.
+- PDF layout breaks must never become invented hard punctuation in TTS.
+- A selected Android voice is only labelled active after the TTS engine accepts it.
+- Prefer genuinely higher-quality/natural system voices when available, while keeping offline fallback.
+
 ## Roadmap
 v0.7 Context AI and narration direction
 v0.8 Neural narrator integration, voice packs, sentence highlighting and deeper audiobook controls

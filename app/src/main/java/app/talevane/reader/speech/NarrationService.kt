@@ -91,7 +91,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
     private var currentContent = ""
     private var currentPosition = 0
     private var speechRate = 1.0f
-    private var ambientVolume = 0.30f
+    private var ambientVolume = 0.38f
     private var currentVoiceMode = VoiceMode.AUTO
     private var voiceProfileLabel = "Auto · sistema"
     private var moodSnapshot = MoodSnapshot(ReadingMood.NEUTRAL, 0.15f, 0.25f)
@@ -103,7 +103,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
     override fun onCreate() {
         super.onCreate()
         ambientVolume = getSharedPreferences(PREFS_AUDIO, MODE_PRIVATE)
-            .getFloat(PREF_AMBIENT_VOLUME, 0.30f)
+            .getFloat(PREF_AMBIENT_VOLUME, 0.38f)
             .coerceIn(0f, 1f)
         ambientSound = AmbientSoundEngine().apply { setVolume(ambientVolume) }
 
@@ -442,9 +442,9 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
 
     /**
      * Builds a TTS-only view of the canonical text without changing its length.
-     * Single line breaks from PDF layout become spaces, while real blank-line
-     * paragraph breaks get a light punctuation pause. Keeping one output char
-     * per source char preserves TextToSpeech range -> canonical position mapping.
+     * PDF layout line/paragraph breaks become spaces. Talevane never invents punctuation:
+     * only punctuation already present in the canonical source controls TTS cadence.
+     * Keeping one output char per source char preserves TextToSpeech range -> canonical mapping.
      */
     private fun prepareSpeechText(raw: String): String {
         if (raw.none { it == '\n' || it == '\r' || it == '\t' }) return raw
@@ -468,12 +468,10 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                         runEnd += 1
                     }
 
-                    var previousIndex = runStart - 1
-                    while (previousIndex >= 0 && raw[previousIndex].isWhitespace()) previousIndex -= 1
-                    val previous = raw.getOrNull(previousIndex)
-                    val punctuationAlreadyThere = previous != null && previous in charArrayOf('.', '!', '?', ';', ':', ',')
-
-                    chars[runStart] = if (logicalBreaks >= 2 && !punctuationAlreadyThere) '.' else ' '
+                    // Never invent punctuation for PDF layout. Real punctuation already present
+                    // in the canonical source drives cadence; visual line/paragraph breaks become spaces.
+                    // This keeps offsets one-to-one while avoiding the hard, "hit" pauses some PDFs caused.
+                    chars[runStart] = ' '
                     for (j in runStart + 1 until runEnd) chars[j] = ' '
                     i = runEnd
                 }

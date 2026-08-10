@@ -106,21 +106,19 @@ object AuthorVoiceProfile {
         if (effective == VoiceMode.MASCULINE || effective == VoiceMode.FEMININE) {
             val savedName = VoicePreferenceStore.selectedVoice(context, bookId, effective)
             val savedVoice = savedName?.let { name -> engine.voices?.firstOrNull { it.name == name } }
-            if (savedVoice != null) {
-                engine.voice = savedVoice
+            if (savedVoice != null && applyConcreteVoice(engine, savedVoice)) {
                 val base = if (effective == VoiceMode.MASCULINE) "masculina" else "femenina"
                 val label = if (requested == VoiceMode.AUTO) "Auto · $base elegida" else "${base.replaceFirstChar { it.uppercase() }} · elegida"
-                return VoiceProfileResult(requested, effective, label, savedVoice.name)
+                return VoiceProfileResult(requested, effective, label, engine.voice?.name ?: savedVoice.name)
             }
 
             val recommended = selectRecommendedVoice(engine, effective)
-            if (recommended != null) {
-                engine.voice = recommended
+            if (recommended != null && applyConcreteVoice(engine, recommended)) {
                 val base = if (effective == VoiceMode.MASCULINE) "masculina" else "femenina"
                 val identified = detectedGender(recommended) == effective
                 val suffix = if (identified) "recomendada" else "recomendada · sexo no verificado"
                 val label = if (requested == VoiceMode.AUTO) "Auto · $base $suffix" else "${base.replaceFirstChar { it.uppercase() }} · $suffix"
-                return VoiceProfileResult(requested, effective, label, recommended.name)
+                return VoiceProfileResult(requested, effective, label, engine.voice?.name ?: recommended.name)
             }
 
             // Do not pretend pitch changes prove speaker sex. This remains only a last-resort hint.
@@ -132,6 +130,12 @@ object AuthorVoiceProfile {
 
         val label = if (requested == VoiceMode.AUTO) "Auto · sistema" else "Sistema"
         return VoiceProfileResult(requested, effective, label, defaultVoice?.name)
+    }
+
+    private fun applyConcreteVoice(engine: TextToSpeech, voice: Voice): Boolean {
+        val languageResult = engine.setLanguage(voice.locale)
+        if (languageResult == TextToSpeech.LANG_MISSING_DATA || languageResult == TextToSpeech.LANG_NOT_SUPPORTED) return false
+        return engine.setVoice(voice) == TextToSpeech.SUCCESS
     }
 
     private fun selectRecommendedVoice(engine: TextToSpeech, target: VoiceMode): Voice? {
