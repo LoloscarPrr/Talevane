@@ -1,0 +1,27 @@
+name: Patch Talevane v0.6.7.2 Reader
+
+on:
+  push:
+    branches: ["release/v0.6.7.2"]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/v0.6.7.2
+      - name: Apply reader patch
+        run: python3 tools/patch_v0672_reader.py
+      - name: Commit reader patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/app/talevane/reader/ui/TalevaneRoot.kt
+          git diff --cached --quiet && exit 0
+          git commit -m "Open reader before chapter analysis finishes"
+          git push origin HEAD:release/v0.6.7.2
