@@ -8,6 +8,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -23,8 +24,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -88,6 +91,28 @@ fun TalevaneRoot(repository: BookRepository) {
 
 private fun progressOf(book: BookEntity): Float =
     if (book.content.isBlank()) 0f else (book.progressChars.toFloat() / book.content.length).coerceIn(0f, 1f)
+
+/** Finds the beginning of the sentence containing a tapped canonical character position. */
+private fun sentenceStartForTap(content: String, tappedPosition: Int): Int {
+    if (content.isEmpty()) return 0
+    val target = tappedPosition.coerceIn(0, content.length)
+    val searchStart = (target - 1200).coerceAtLeast(0)
+    var boundary = target - 1
+    while (boundary >= searchStart) {
+        val char = content[boundary]
+        if (char == '.' || char == '!' || char == '?' || char == '…') {
+            var candidate = boundary + 1
+            while (candidate < content.length && content[candidate].isWhitespace()) candidate++
+            while (candidate < content.length && content[candidate] in charArrayOf('"', ''', '“', '”', '‘', '’', '«', '»', '—')) candidate++
+            if (candidate <= target) return candidate.coerceIn(0, content.length)
+        }
+        boundary--
+    }
+
+    var fallback = searchStart
+    while (fallback < target && content[fallback].isWhitespace()) fallback++
+    return fallback.coerceIn(0, content.length)
+}
 
 @Composable
 private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) {
@@ -163,7 +188,7 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
                         Row(verticalAlignment = Alignment.Bottom) {
                             Text("Talevane", style = MaterialTheme.typography.headlineLarge)
                             Spacer(Modifier.width(8.dp))
-                            Text("v0.6.5.2", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            Text("v0.6.6", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                         }
                         Text("Tus historias, llevadas a la vida.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -728,6 +753,12 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                     Text(display.author, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(14.dp))
                     MoodCard(moodSnapshot, ambientIsPlaying, ambientVolume)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Toca una frase para escuchar desde ahí",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     Spacer(Modifier.height(22.dp))
                 }
             }
@@ -741,11 +772,15 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                     items = chunks,
                     key = { _, chunk -> chunk.start }
                 ) { index, chunk ->
-                    Text(
-                        chunk.text,
-                        fontSize = fontSize.sp,
-                        lineHeight = (fontSize * 1.55f).sp,
-                        fontFamily = FontFamily.Serif
+                    TappableReadingChunk(
+                        chunk = chunk,
+                        fontSize = fontSize,
+                        onTapPosition = { tappedPosition ->
+                            val start = sentenceStartForTap(current.content, tappedPosition)
+                            manualPosition = start
+                            scope.launch { repository.saveProgress(current.id, start) }
+                            NarrationClient.start(context, current.id, start, speechRate)
+                        }
                     )
                     if (index != chunks.lastIndex) Spacer(Modifier.height(12.dp))
                 }
@@ -754,6 +789,31 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
             item(key = "reader-footer") { Spacer(Modifier.height(80.dp)) }
         }
     }
+}
+
+@Composable
+private fun TappableReadingChunk(
+    chunk: ReadingChunk,
+    fontSize: Float,
+    onTapPosition: (Int) -> Unit
+) {
+    var layout by remember(chunk.start, chunk.end) { mutableStateOf<TextLayoutResult?>(null) }
+    Text(
+        text = chunk.text,
+        modifier = Modifier
+            .fillMaxWidth()
+            .pointerInput(chunk.start, chunk.end) {
+                detectTapGestures { point ->
+                    val result = layout ?: return@detectTapGestures
+                    val localOffset = result.getOffsetForPosition(point).coerceIn(0, chunk.text.length)
+                    onTapPosition((chunk.start + localOffset).coerceIn(chunk.start, chunk.end))
+                }
+            },
+        fontSize = fontSize.sp,
+        lineHeight = (fontSize * 1.55f).sp,
+        fontFamily = FontFamily.Serif,
+        onTextLayout = { layout = it }
+    )
 }
 
 @Composable
