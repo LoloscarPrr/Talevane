@@ -26,7 +26,6 @@ jobs:
                   app/src/main/java/app/talevane/reader/speech/VoiceQualityHeuristics.kt \
                   app/src/main/java/app/talevane/reader/speech/VoicePreferences.kt \
                   app/build.gradle.kts \
-                  .github/workflows/build-talevane-from-zip.yml \
                   app/src/main/java/app/talevane/reader/ui/TalevaneRoot.kt \
                   README.md PRODUCT_BIBLE.md
           git diff --cached --quiet && exit 0
