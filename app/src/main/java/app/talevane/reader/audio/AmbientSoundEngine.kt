@@ -49,7 +49,7 @@ class AmbientSoundEngine {
     @Volatile private var shouldPlay = false
     @Volatile private var targetMood = ReadingMood.NEUTRAL
     @Volatile private var targetIntensity = 0.2f
-    @Volatile private var targetVolume = 0.30f
+    @Volatile private var targetVolume = 0.38f
 
     private var worker: Thread? = null
 
@@ -169,7 +169,7 @@ class AmbientSoundEngine {
                     val a = renderPiano(fromProfile, t, smoothedIntensity)
                     val b = renderPiano(toProfile, t, smoothedIntensity)
                     val mixed = a * (1.0 - fade) + b * fade
-                    val master = 0.31 * smoothedVolume * (0.80 + smoothedIntensity * 0.20)
+                    val master = 0.50 * smoothedVolume * (0.82 + smoothedIntensity * 0.18)
                     pcm[i] = (softClip(mixed * master) * Short.MAX_VALUE).toInt().toShort()
 
                     sampleIndex++

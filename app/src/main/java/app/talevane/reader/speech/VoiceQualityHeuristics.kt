@@ -23,11 +23,11 @@ object VoiceQualityHeuristics {
 
         when {
             voice.quality >= Voice.QUALITY_VERY_HIGH -> {
-                score += 38
+                score += 48
                 notes += "calidad muy alta"
             }
             voice.quality >= Voice.QUALITY_HIGH -> {
-                score += 28
+                score += 34
                 notes += "calidad alta"
             }
             voice.quality >= Voice.QUALITY_NORMAL -> score += 10
@@ -55,7 +55,7 @@ object VoiceQualityHeuristics {
         }
 
         if (narratorHints.any(searchable::contains)) {
-            score += 22
+            score += 36
             notes += "perfil natural/neural"
         }
         if (weakHints.any(searchable::contains)) {
@@ -67,13 +67,13 @@ object VoiceQualityHeuristics {
         // that way. They are not automatically preferred, but neither are they buried below every
         // offline voice as in v0.6.2.
         if (voice.isNetworkConnectionRequired) {
-            score += 3
-            notes += "requiere internet"
+            score += if (voice.quality >= Voice.QUALITY_HIGH) 22 else 7
+            notes += if (voice.quality >= Voice.QUALITY_HIGH) "voz online de alta calidad" else "requiere internet"
         } else {
             notes += "offline"
         }
 
-        val recommended = score >= 38 && !(detected != null && detected != desiredMode)
+        val recommended = score >= 42 && !(detected != null && detected != desiredMode)
         val summary = notes.distinct().joinToString(" · ")
         return VoiceAssessment(score, recommended, summary)
     }

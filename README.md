@@ -1,4 +1,12 @@
-# Talevane v0.6.5
+# Talevane v0.6.5.1
+
+## v0.6.5.1 — Audio balance & smoother narration
+- Piano output is raised substantially so it remains audible under narration without forcing the listener to concentrate on it.
+- New installs start with a slightly higher piano level; the independent volume control remains available.
+- TTS no longer invents full-stop punctuation from PDF blank-line/layout breaks; only source punctuation drives hard pauses.
+- Installed voice selection sets the selected voice locale before applying the voice and only reports it as active when the Android TTS engine accepts it.
+- High-quality network/natural voices exposed by the system TTS engine are preferred more strongly over compact/robotic variants.
+- This does not turn Android TTS into a neural narrator; the provider-neutral neural narrator path remains a later opt-in feature.
 
 Offline-first Android book reader evolving into an immersive listening experience.
 
