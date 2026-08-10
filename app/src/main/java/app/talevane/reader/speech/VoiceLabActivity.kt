@@ -1,5 +1,6 @@
 package app.talevane.reader.speech
 
+import android.content.Intent
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
@@ -11,6 +12,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -27,7 +30,8 @@ private data class VoiceOption(
     val title: String,
     val subtitle: String,
     val detectedMode: VoiceMode?,
-    val assessment: VoiceAssessment
+    val assessment: VoiceAssessment,
+    val needsDownload: Boolean
 )
 
 class VoiceLabActivity : ComponentActivity() {
@@ -67,7 +71,9 @@ class VoiceLabActivity : ComponentActivity() {
                     selectedVoiceName = selectedVoiceName,
                     onBack = { finish() },
                     onPreview = ::preview,
-                    onSelect = ::selectVoice
+                    onSelect = ::selectVoice,
+                    onInstallVoices = ::installMoreVoices,
+                    onReload = ::loadVoices
                 )
             }
         }
@@ -112,7 +118,8 @@ class VoiceLabActivity : ComponentActivity() {
                 title = "${localeTitle(voice.locale)} · Voz $index",
                 subtitle = assessment.summary,
                 detectedMode = AuthorVoiceProfile.detectedGender(voice),
-                assessment = assessment
+                assessment = assessment,
+                needsDownload = voice.features.orEmpty().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)
             )
         }
         ready = true
@@ -140,9 +147,22 @@ class VoiceLabActivity : ComponentActivity() {
         )
     }
 
+    private fun installMoreVoices() {
+        runCatching {
+            startActivity(Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA))
+        }.onFailure {
+            error = "El motor de voz de este teléfono no ofrece un instalador compatible. Puedes gestionar sus voces desde los ajustes de texto a voz de Android."
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (ready && tts != null) loadVoices()
+    }
+
     private fun selectVoice(option: VoiceOption) {
         val incompatible = option.detectedMode != null && option.detectedMode != desiredMode
-        if (incompatible) return
+        if (incompatible || option.needsDownload) return
         tts?.stop()
         selectedVoiceName = option.voice.name
         NarrationClient.chooseVoice(this, bookId, desiredMode, option.voice.name)
@@ -168,7 +188,9 @@ private fun VoiceLabScreen(
     selectedVoiceName: String?,
     onBack: () -> Unit,
     onPreview: (VoiceOption) -> Unit,
-    onSelect: (VoiceOption) -> Unit
+    onSelect: (VoiceOption) -> Unit,
+    onInstallVoices: () -> Unit,
+    onReload: () -> Unit
 ) {
     val desiredLabel = if (mode == VoiceMode.MASCULINE) "masculina" else "femenina"
     var showAll by rememberSaveable { mutableStateOf(false) }
@@ -188,9 +210,22 @@ private fun VoiceLabScreen(
                 Text("Elige una voz $desiredLabel", style = MaterialTheme.typography.headlineSmall)
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Talevane prioriza ahora las voces que parecen más adecuadas para narrar. Si Android no identifica el sexo de una voz, se mostrará como no verificado en vez de adivinar.",
+                    "Talevane ordena primero las voces de mayor calidad que el motor del teléfono expone. Puedes pedirle al propio motor que descargue más datos de voz y luego actualizar esta lista.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onInstallVoices) {
+                        Icon(Icons.Default.Download, null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Descargar más voces")
+                    }
+                    OutlinedButton(onClick = onReload) {
+                        Icon(Icons.Default.Refresh, null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Actualizar")
+                    }
+                }
                 Spacer(Modifier.height(12.dp))
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
                     Column(Modifier.fillMaxWidth().padding(14.dp)) {
@@ -253,6 +288,10 @@ private fun VoiceLabScreen(
                                         option.detectedMode == VoiceMode.FEMININE -> AssistChip(onClick = {}, label = { Text("Femenina identificada por el motor") })
                                         else -> AssistChip(onClick = {}, label = { Text("Sexo no verificado · escucha antes de elegir") })
                                     }
+                                    if (option.needsDownload) {
+                                        Spacer(Modifier.height(6.dp))
+                                        Text("Esta voz necesita descargar datos antes de poder usarse.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                                    }
                                     if (incompatible) {
                                         Spacer(Modifier.height(6.dp))
                                         Text("Android identifica esta voz como incompatible con el filtro elegido.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
@@ -264,8 +303,12 @@ private fun VoiceLabScreen(
                                             Spacer(Modifier.width(4.dp))
                                             Text("Probar")
                                         }
-                                        Button(onClick = { onSelect(option) }, enabled = !selected && !incompatible) {
-                                            Text(if (selected) "Seleccionada" else "Usar esta voz")
+                                        Button(onClick = { onSelect(option) }, enabled = !selected && !incompatible && !option.needsDownload) {
+                                            Text(when {
+                                                selected -> "Seleccionada"
+                                                option.needsDownload -> "Requiere descarga"
+                                                else -> "Usar esta voz"
+                                            })
                                         }
                                     }
                                 }

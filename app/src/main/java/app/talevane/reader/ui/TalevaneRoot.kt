@@ -27,7 +27,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -67,6 +69,8 @@ private data class ReaderPrepared(
 private data class NarrationUiState(
     val bookId: Long = -1L,
     val position: Int = 0,
+    val highlightStart: Int = -1,
+    val highlightEnd: Int = -1,
     val rate: Float = 1.0f,
     val speaking: Boolean = false,
     val ready: Boolean = false,
@@ -92,27 +96,31 @@ fun TalevaneRoot(repository: BookRepository) {
 private fun progressOf(book: BookEntity): Float =
     if (book.content.isBlank()) 0f else (book.progressChars.toFloat() / book.content.length).coerceIn(0f, 1f)
 
-/** Finds the beginning of the sentence containing a tapped canonical character position. */
-private fun sentenceStartForTap(content: String, tappedPosition: Int): Int {
+/** Resolves a tap to the beginning of the word actually touched in canonical text. */
+private fun wordStartForTap(content: String, tappedPosition: Int): Int {
     if (content.isEmpty()) return 0
-    val target = tappedPosition.coerceIn(0, content.length)
-    val searchStart = (target - 1200).coerceAtLeast(0)
-    var boundary = target - 1
-    while (boundary >= searchStart) {
-        val char = content[boundary]
-        if (char == '.' || char == '!' || char == '?' || char == '…') {
-            var candidate = boundary + 1
-            while (candidate < content.length && content[candidate].isWhitespace()) candidate++
-            while (candidate < content.length && content[candidate] in charArrayOf('"', '“', '”', '‘', '’', '«', '»', '—')) candidate++
-            if (candidate <= target) return candidate.coerceIn(0, content.length)
+    var target = tappedPosition.coerceIn(0, content.lastIndex)
+
+    // TextLayout can return nearby whitespace; prefer the closest visible character ahead,
+    // then fall back behind the tap. This keeps the gesture feeling spatially accurate.
+    if (content[target].isWhitespace()) {
+        var forward = target
+        while (forward < content.length && content[forward].isWhitespace() && forward - target < 80) forward++
+        if (forward < content.length && !content[forward].isWhitespace()) {
+            target = forward
+        } else {
+            var back = target
+            while (back > 0 && content[back].isWhitespace() && target - back < 80) back--
+            target = back
         }
-        boundary--
     }
 
-    var fallback = searchStart
-    while (fallback < target && content[fallback].isWhitespace()) fallback++
-    return fallback.coerceIn(0, content.length)
+    fun belongsToWord(c: Char): Boolean = c.isLetterOrDigit() || c == '\'' || c == '’'
+    while (target > 0 && belongsToWord(content[target - 1])) target--
+    return target.coerceIn(0, content.length)
 }
+
+private const val READER_FONT_SIZE_SP = 17f
 
 @Composable
 private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) {
@@ -188,7 +196,7 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
                         Row(verticalAlignment = Alignment.Bottom) {
                             Text("Talevane", style = MaterialTheme.typography.headlineLarge)
                             Spacer(Modifier.width(8.dp))
-                            Text("v0.6.6", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            Text("v0.6.7", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                         }
                         Text("Tus historias, llevadas a la vida.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -338,7 +346,6 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var book by remember { mutableStateOf<BookEntity?>(null) }
-    var fontSize by rememberSaveable { mutableStateOf(19f) }
     var restored by remember(bookId) { mutableStateOf(false) }
     var showChapters by rememberSaveable { mutableStateOf(false) }
     var showVoiceMenu by rememberSaveable { mutableStateOf(false) }
@@ -377,7 +384,7 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
             withContext(Dispatchers.Default) {
                 ReaderPrepared(
                     structure = BookStructureAnalyzer.analyze(current.content),
-                    chunks = ReadingChunker.chunk(current.content)
+                    chunks = ReadingChunker.chunk(current.content, maxChars = 700)
                 )
             }
         }.onSuccess { prepared = it }
@@ -405,6 +412,7 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
     }
     var narrationState by remember(current.id) { mutableStateOf(NarrationUiState(position = initialResumePosition)) }
     var manualPosition by remember(current.id) { mutableIntStateOf(initialResumePosition) }
+    var followedChunkIndex by remember(current.id) { mutableIntStateOf(-1) }
     var speechRate by rememberSaveable(current.id) { mutableFloatStateOf(1.0f) }
     var ambientVolume by rememberSaveable(current.id) { mutableFloatStateOf(0.30f) }
     var voiceMode by remember(current.id) { mutableStateOf(VoicePreferenceStore.get(context, current.id)) }
@@ -420,6 +428,8 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                 val state = NarrationUiState(
                     bookId = stateBookId,
                     position = intent.getIntExtra(NarrationService.EXTRA_POSITION, 0),
+                    highlightStart = intent.getIntExtra(NarrationService.EXTRA_HIGHLIGHT_START, -1),
+                    highlightEnd = intent.getIntExtra(NarrationService.EXTRA_HIGHLIGHT_END, -1),
                     rate = intent.getFloatExtra(NarrationService.EXTRA_RATE, 1.0f),
                     speaking = intent.getBooleanExtra(NarrationService.EXTRA_SPEAKING, false),
                     ready = intent.getBooleanExtra(NarrationService.EXTRA_READY, false),
@@ -484,10 +494,14 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
         }
     }
 
-    LaunchedEffect(narrationState.position, isSpeaking, restored, chunks.size) {
+    LaunchedEffect(narrationState.highlightStart, isSpeaking, restored, chunks.size) {
         if (isSpeaking && restored && chunks.isNotEmpty() && current.content.isNotBlank()) {
-            val index = ReadingChunker.indexForPosition(chunks, narrationState.position)
-            listState.scrollToItem(index + 1)
+            val followPosition = narrationState.highlightStart.takeIf { it >= 0 } ?: narrationState.position
+            val index = ReadingChunker.indexForPosition(chunks, followPosition)
+            if (index != followedChunkIndex) {
+                followedChunkIndex = index
+                listState.animateScrollToItem(index + 1)
+            }
         }
     }
 
@@ -729,14 +743,12 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                     }
 
                     HorizontalDivider()
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = { fontSize = (fontSize - 1).coerceAtLeast(14f) }) { Text("A−") }
-                        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(display.author, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("${fontSize.toInt()} sp", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        TextButton(onClick = { fontSize = (fontSize + 1).coerceAtMost(34f) }) { Text("A+") }
-                    }
+                    Text(
+                        "Toca cualquier palabra para saltar ahí · seguimiento automático activo",
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 7.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }
@@ -774,10 +786,12 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                 ) { index, chunk ->
                     TappableReadingChunk(
                         chunk = chunk,
-                        fontSize = fontSize,
+                        highlightStart = if (isSpeaking) narrationState.highlightStart else -1,
+                        highlightEnd = if (isSpeaking) narrationState.highlightEnd else -1,
                         onTapPosition = { tappedPosition ->
-                            val start = sentenceStartForTap(current.content, tappedPosition)
+                            val start = wordStartForTap(current.content, tappedPosition)
                             manualPosition = start
+                            followedChunkIndex = ReadingChunker.indexForPosition(chunks, start)
                             scope.launch { repository.saveProgress(current.id, start) }
                             NarrationClient.start(context, current.id, start, speechRate)
                         }
@@ -794,12 +808,32 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
 @Composable
 private fun TappableReadingChunk(
     chunk: ReadingChunk,
-    fontSize: Float,
+    highlightStart: Int,
+    highlightEnd: Int,
     onTapPosition: (Int) -> Unit
 ) {
     var layout by remember(chunk.start, chunk.end) { mutableStateOf<TextLayoutResult?>(null) }
+    val highlightBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.34f)
+    val highlightForeground = MaterialTheme.colorScheme.onSurface
+    val rendered = buildAnnotatedString {
+        append(chunk.text)
+        val localStart = (highlightStart - chunk.start).coerceIn(0, chunk.text.length)
+        val localEnd = (highlightEnd - chunk.start).coerceIn(0, chunk.text.length)
+        if (highlightStart >= chunk.start && highlightStart < chunk.end && localEnd > localStart) {
+            addStyle(
+                SpanStyle(
+                    background = highlightBackground,
+                    color = highlightForeground,
+                    fontWeight = FontWeight.SemiBold
+                ),
+                localStart,
+                localEnd
+            )
+        }
+    }
+
     Text(
-        text = chunk.text,
+        text = rendered,
         modifier = Modifier
             .fillMaxWidth()
             .pointerInput(chunk.start, chunk.end) {
@@ -809,8 +843,8 @@ private fun TappableReadingChunk(
                     onTapPosition((chunk.start + localOffset).coerceIn(chunk.start, chunk.end))
                 }
             },
-        fontSize = fontSize.sp,
-        lineHeight = (fontSize * 1.55f).sp,
+        fontSize = READER_FONT_SIZE_SP.sp,
+        lineHeight = (READER_FONT_SIZE_SP * 1.48f).sp,
         fontFamily = FontFamily.Serif,
         onTextLayout = { layout = it }
     )

@@ -1,4 +1,12 @@
-# Talevane v0.6.6
+# Talevane v0.6.7
+
+## v0.6.7 — Guided Reading
+- Tapping text now resolves to the beginning of the word actually touched instead of jumping back to the previous sentence boundary.
+- Android TTS timing ranges are exposed to the reader for karaoke-style live highlighting when the active engine supplies range timing.
+- Reader chunks are shorter so automatic follow keeps the active text visible without changing canonical offsets.
+- Reader font is fixed at a compact 17 sp; A-/A+ controls are removed in favor of narration-first controls.
+- Voice Lab can launch the installed TTS engine's official voice-data installer, refresh its inventory, and identify voices that still require download data.
+- Talevane continues to rank the device engine's higher-quality Spanish voices first; it does not silently download proprietary voice packages itself.
 
 ## v0.6.6 — Book Score + Tap to Narrate
 - Every book now receives a deterministic local score identity derived from title + author.
