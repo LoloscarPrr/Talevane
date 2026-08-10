@@ -163,7 +163,7 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
                         Row(verticalAlignment = Alignment.Bottom) {
                             Text("Talevane", style = MaterialTheme.typography.headlineLarge)
                             Spacer(Modifier.width(8.dp))
-                            Text("v0.6.4.2", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            Text("v0.6.5", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                         }
                         Text("Tus historias, llevadas a la vida.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -627,8 +627,8 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                                 style = MaterialTheme.typography.labelLarge
                             )
                             Text(
-                                if (ambientIsPlaying) "Música · ${moodSnapshot.mood.label} · sonando"
-                                else "Música · ${moodSnapshot.mood.label}",
+                                if (ambientIsPlaying) "Piano · ${moodSnapshot.mood.label} · sonando"
+                                else "Piano · ${moodSnapshot.mood.label}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary,
                                 maxLines = 1,
@@ -692,7 +692,7 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                         Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 1.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.VolumeDown, "Volumen de música", modifier = Modifier.size(20.dp))
+                        Icon(Icons.Default.VolumeDown, "Volumen de piano", modifier = Modifier.size(20.dp))
                         Slider(
                             value = ambientVolume,
                             onValueChange = { ambientVolume = it },
@@ -771,7 +771,7 @@ private fun MoodCard(snapshot: MoodSnapshot, soundActive: Boolean, ambientVolume
             )
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text("Música · ${snapshot.mood.label}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                Text("Piano · ${snapshot.mood.label}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSecondaryContainer)
                 Text(
                     if (soundActive) "Sonando al ${(ambientVolume * 100).roundToInt()}% · ${snapshot.mood.description}"
                     else snapshot.mood.description,
