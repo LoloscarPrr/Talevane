@@ -46,10 +46,9 @@ Turn books the user already owns into a private, immersive reading and listening
 
 ### v0.6 — Adaptive Soundtrack
 - Original procedural soundscapes generated locally; no external tracks required.
-- Mood Engine drives the background ambience while narration progresses.
+- Mood Engine drives background audio while narration progresses.
 - Gradual crossfades between mood states.
-- Independent persistent ambience volume.
-- Ambience continues with background narration and lock-screen playback.
+- Independent persistent soundtrack volume.
 
 ### v0.6.1 — Reading continuity + voice profile
 - Resume from the beginning of the last paragraph/block while retaining precise progress.
@@ -62,48 +61,57 @@ Turn books the user already owns into a private, immersive reading and listening
 - Pitch-only changes are a labelled last-resort approximation, never presented as a confirmed speaker sex.
 
 ### v0.6.3 — Musical Soundtrack
-- Adaptive audio is explicitly musical rather than primarily drone/noise based.
-- Each mood defines a tonal centre, scale, chord progression, tempo, arpeggio and melodic motif.
-- Bass and selective procedural percussion add musical structure without overpowering narration.
-- Music is generated locally from synthesis; no external songs or copyrighted samples are bundled.
+- Adaptive audio gained tonal centre, scales, chord progressions, arpeggios and melody.
+- Music is generated locally; no external songs or copyrighted samples are bundled.
 
 ### v0.6.4 — Book Structure & Fast Import
 - File parsing/import runs away from the UI thread and provides immediate loading feedback.
-- Local structure analysis distinguishes likely front matter from the beginning of meaningful reading content.
-- Chapter/section detection supports explicit headings, Roman numerals, numbered headings and title-like isolated headings.
-- Likely table-of-contents duplicates are de-duplicated toward later real section occurrences.
-- Narration started before the detected reading start jumps to the first reading section instead of reciting publisher/edition metadata.
-- Structure analysis never edits, trims or replaces the canonical extracted source text.
+- Local structure analysis distinguishes likely front matter from meaningful reading content.
+- Narration started before detected reading content skips publisher/edition metadata.
 
 ### v0.6.4.1 — Virtualized long-book reader
-- Long source text must not be laid out as one giant UI text node.
-- Reader content is virtualized into canonical-position chunks so only visible/nearby text is composed.
+- Long source text is virtualized into canonical-position chunks.
 - Structure/chunk preparation runs off the UI thread.
-- Freshly imported books may be handed directly from memory to avoid an unnecessary immediate full database read.
-- Chapter jumps, progress and narration-follow behavior retain canonical character-position mapping.
+- Chapter jumps, progress and narration-follow retain canonical character-position mapping.
 
 ### v0.6.4.2 — Natural Narration & Genre Mood
-- TTS uses a temporary speech view where PDF layout line breaks become spaces rather than pauses.
+- PDF layout line breaks become spaces only in the temporary TTS view.
 - Speech chunking follows punctuation instead of visual line endings.
-- Paragraph breaks may add a light pause while preserving one-to-one canonical character mapping.
 - Mood detection uses stronger horror/mystery/tension language and a weak whole-book genre prior.
-- Generic words about existence or consciousness alone must not force Reflective mood.
-- Horror genre cues such as Lovecraft/Cthulhu may bias ambiguous passages toward Mystery/Tension without permanently locking the mood.
+
+### v0.6.5 — Piano Engine + Narrator Foundation
+- Adaptive soundtrack is piano-only: no pads, drums, percussion or noise layers.
+- Mood controls piano harmony, register, tempo, density, decay and dynamics.
+- Voice Lab ranks installed voices by narration suitability instead of presenting all voices as equally useful.
+- Recommended voice scoring considers quality, latency, language, actual gender tags when present and neural/natural metadata hints.
+- A voice tagged as the opposite sex cannot be selected under the requested Masculine/Feminine filter.
+- Unknown speaker sex is shown as unverified, never guessed from pitch.
+- Network-backed system voices may rank above robotic offline voices when their metadata suggests better narration quality.
+- H. P. Lovecraft is included in conservative automatic author-profile inference.
+- Provider-neutral neural narrator interfaces are now part of the architecture.
+- v0.6.5 does not embed provider API keys and does not send source-book text to an external service.
 
 ## Roadmap
 v0.7 Context AI and narration direction
-v0.8 Voice packs, sentence highlighting and deeper audiobook controls
+v0.8 Neural narrator integration, voice packs, sentence highlighting and deeper audiobook controls
 v0.9 Cover art, richer metadata and library polish
 
 ## Audio canon
 - Narration remains intelligible above the soundtrack.
 - Background music should be supportive, low-distraction and gradual.
+- The default adaptive soundtrack instrument is piano; mood changes alter how the piano plays rather than swapping unrelated sound palettes.
+- Mystery/terror may use lower register, sparse notes and dissonant harmony; reflection/calm/warmth may use gentler voicings and arpeggios.
 - A mood change does not require an immediate hard audio cut.
-- The offline baseline must provide actual tonal/musical structure, not depend primarily on noise or a continuous drone.
-- Future richer soundtrack sources must preserve a usable offline path.
+- The offline baseline must remain usable without external music services.
 - Never claim a speaker sex from pitch alone. Prefer a real installed voice selected or explicitly identified by the TTS engine.
 - PDF line wrapping is layout, not prose punctuation; narration must not pause simply because a visual line ended.
-- TTS preprocessing may derive a temporary speaking representation only when canonical offsets remain traceable.
+
+## Narrator canon
+- Device TTS remains the offline fallback even after neural narration exists.
+- Human-sounding neural narration must be optional and clearly distinguishable from device TTS.
+- Provider secrets must never be embedded directly in the APK.
+- Sending source text to an external narrator requires an explicit user-facing privacy flow.
+- Neural-provider integration must preserve canonical source offsets so progress, chapters and highlighting stay correct.
 
 ## Structure canon
 - Front matter may remain visible to the reader, but narration should not treat publisher/edition metadata as the narrative beginning by default.
