@@ -1,0 +1,27 @@
+name: Fix Talevane v0.6.5 Voice Lab import
+
+on:
+  push:
+    branches: ["release/v0.6.5"]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/v0.6.5
+      - name: Apply import fix
+        run: python3 tools/fix_v065_voice_import.py
+      - name: Commit fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/app/talevane/reader/speech/VoiceLabActivity.kt
+          git diff --cached --quiet && exit 0
+          git commit -m "Fix Voice Lab rememberSaveable import"
+          git push origin HEAD:release/v0.6.5
