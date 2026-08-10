@@ -82,6 +82,14 @@ Turn books the user already owns into a private, immersive reading and listening
 - Freshly imported books may be handed directly from memory to avoid an unnecessary immediate full database read.
 - Chapter jumps, progress and narration-follow behavior retain canonical character-position mapping.
 
+### v0.6.4.2 — Natural Narration & Genre Mood
+- TTS uses a temporary speech view where PDF layout line breaks become spaces rather than pauses.
+- Speech chunking follows punctuation instead of visual line endings.
+- Paragraph breaks may add a light pause while preserving one-to-one canonical character mapping.
+- Mood detection uses stronger horror/mystery/tension language and a weak whole-book genre prior.
+- Generic words about existence or consciousness alone must not force Reflective mood.
+- Horror genre cues such as Lovecraft/Cthulhu may bias ambiguous passages toward Mystery/Tension without permanently locking the mood.
+
 ## Roadmap
 v0.7 Context AI and narration direction
 v0.8 Voice packs, sentence highlighting and deeper audiobook controls
@@ -94,6 +102,8 @@ v0.9 Cover art, richer metadata and library polish
 - The offline baseline must provide actual tonal/musical structure, not depend primarily on noise or a continuous drone.
 - Future richer soundtrack sources must preserve a usable offline path.
 - Never claim a speaker sex from pitch alone. Prefer a real installed voice selected or explicitly identified by the TTS engine.
+- PDF line wrapping is layout, not prose punctuation; narration must not pause simply because a visual line ended.
+- TTS preprocessing may derive a temporary speaking representation only when canonical offsets remain traceable.
 
 ## Structure canon
 - Front matter may remain visible to the reader, but narration should not treat publisher/edition metadata as the narrative beginning by default.
