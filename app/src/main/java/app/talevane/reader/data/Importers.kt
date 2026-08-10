@@ -1,13 +1,23 @@
 package app.talevane.reader.data
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.graphics.pdf.PdfRenderer
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
+import com.google.android.gms.tasks.Tasks
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import java.io.File
+import java.util.concurrent.TimeUnit
 import java.util.zip.ZipFile
 import javax.xml.parsers.DocumentBuilderFactory
+import kotlin.math.roundToInt
 
 data class ImportedBook(
     val title: String,
@@ -37,19 +47,114 @@ object Importers {
 
     private fun importPdf(context: Context, uri: Uri, name: String): ImportedBook {
         val tmp = File.createTempFile("talevane-", ".pdf", context.cacheDir)
-        context.contentResolver.openInputStream(uri)!!.use { input ->
-            tmp.outputStream().use { output -> input.copyTo(output) }
-        }
-        val doc = PDDocument.load(tmp)
-        val text = try {
-            PDFTextStripper().getText(doc).trim()
+        try {
+            context.contentResolver.openInputStream(uri)!!.use { input ->
+                tmp.outputStream().use { output -> input.copyTo(output) }
+            }
+
+            val extracted = PDDocument.load(tmp).use { doc ->
+                PDFTextStripper().getText(doc).trim()
+            }
+
+            val usedOcr = !looksLikeReadableBookText(extracted)
+            val text = if (usedOcr) {
+                ocrPdf(tmp).trim()
+            } else {
+                extracted
+            }
+
+            if (!looksLikeReadableBookText(text)) {
+                error(
+                    "Este PDF no contiene texto extraíble de forma fiable. " +
+                        "Talevane intentó también reconocimiento visual, pero no pudo recuperar suficiente texto legible."
+                )
+            }
+
+            val fallback = cleanFileTitle(name)
+            val (title, author) = guessMetadata(text, fallback)
+            return ImportedBook(title, author, if (usedOcr) "PDF · OCR" else "PDF", name, text)
         } finally {
-            doc.close()
             tmp.delete()
         }
-        val fallback = cleanFileTitle(name)
-        val (title, author) = guessMetadata(text, fallback)
-        return ImportedBook(title, author, "PDF", name, text)
+    }
+
+    /**
+     * Detects the common PDF failure where embedded fonts have no useful Unicode map and a text
+     * extractor returns mostly punctuation/symbol glyph codes. Talevane is a book reader, so prose
+     * should contain a healthy amount of letters and word-like runs.
+     */
+    private fun looksLikeReadableBookText(text: String): Boolean {
+        if (text.isBlank()) return false
+        val sample = text.take(24_000)
+        val visible = sample.count { !it.isWhitespace() }
+        if (visible < 80) return false
+
+        val letters = sample.count { it.isLetter() }
+        val privateOrReplacement = sample.count { it == '\uFFFD' || it in '\uE000'..'\uF8FF' }
+        val acceptedPunctuation = setOf(
+            '.', ',', ';', ':', '!', '?', '¿', '¡', '…', '-', '—', '–',
+            '\'', '’', '“', '”', '«', '»', '(', ')', '[', ']', '/', '%'
+        )
+        val suspicious = sample.count { ch ->
+            !ch.isWhitespace() && !ch.isLetterOrDigit() && ch !in acceptedPunctuation
+        }
+        val wordRuns = Regex("""\p{L}{3,}""").findAll(sample).take(16).count()
+
+        val letterRatio = letters.toFloat() / visible
+        val suspiciousRatio = suspicious.toFloat() / visible
+        val damagedRatio = privateOrReplacement.toFloat() / visible
+
+        return letters >= 70 &&
+            wordRuns >= 8 &&
+            letterRatio >= 0.46f &&
+            suspiciousRatio <= 0.20f &&
+            damagedRatio <= 0.01f
+    }
+
+    /**
+     * Local fallback for PDFs whose embedded text mapping is corrupt or absent. Pages are rendered
+     * with Android's PdfRenderer and recognized with ML Kit's bundled Latin model. Only one page
+     * bitmap is alive at a time to keep memory bounded on long books.
+     */
+    private fun ocrPdf(file: File): String {
+        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+        val descriptor = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+        val renderer = PdfRenderer(descriptor)
+        val out = StringBuilder()
+
+        try {
+            for (index in 0 until renderer.pageCount) {
+                val page = renderer.openPage(index)
+                var bitmap: Bitmap? = null
+                try {
+                    val targetWidth = 1800
+                    val scale = targetWidth.toFloat() / page.width.coerceAtLeast(1)
+                    val targetHeight = (page.height * scale).roundToInt().coerceIn(1, 3200)
+                    bitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
+                    bitmap.eraseColor(Color.WHITE)
+                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+
+                    val image = InputImage.fromBitmap(bitmap, 0)
+                    val recognized = Tasks.await(recognizer.process(image), 45, TimeUnit.SECONDS)
+                        .text
+                        .trim()
+
+                    if (recognized.isNotBlank()) {
+                        if (out.isNotEmpty()) out.append("\n\n")
+                        out.append(recognized)
+                    }
+                } finally {
+                    bitmap?.recycle()
+                    page.close()
+                }
+            }
+        } finally {
+            renderer.close()
+            descriptor.close()
+            recognizer.close()
+        }
+
+        return out.toString()
     }
 
     private fun importEpub(context: Context, uri: Uri, name: String): ImportedBook {

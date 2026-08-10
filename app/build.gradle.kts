@@ -12,8 +12,8 @@ android {
         applicationId = "app.talevane.reader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 17
-        versionName = "0.6.7"
+        versionCode = 18
+        versionName = "0.6.7.1"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -45,4 +45,5 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("androidx.media:media:1.7.0")
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+    implementation("com.google.mlkit:text-recognition:16.0.1")
 }
