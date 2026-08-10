@@ -12,8 +12,8 @@ android {
         applicationId = "app.talevane.reader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 18
-        versionName = "0.6.7.1"
+        versionCode = 19
+        versionName = "0.6.7.2"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
