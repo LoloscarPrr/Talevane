@@ -103,7 +103,7 @@ private fun sentenceStartForTap(content: String, tappedPosition: Int): Int {
         if (char == '.' || char == '!' || char == '?' || char == '…') {
             var candidate = boundary + 1
             while (candidate < content.length && content[candidate].isWhitespace()) candidate++
-            while (candidate < content.length && content[candidate] in charArrayOf('"', ''', '“', '”', '‘', '’', '«', '»', '—')) candidate++
+            while (candidate < content.length && content[candidate] in charArrayOf('"', '“', '”', '‘', '’', '«', '»', '—')) candidate++
             if (candidate <= target) return candidate.coerceIn(0, content.length)
         }
         boundary--
