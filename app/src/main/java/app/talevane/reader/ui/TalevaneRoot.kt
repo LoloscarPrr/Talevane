@@ -196,7 +196,7 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
                         Row(verticalAlignment = Alignment.Bottom) {
                             Text("Talevane", style = MaterialTheme.typography.headlineLarge)
                             Spacer(Modifier.width(8.dp))
-                            Text("v0.6.7.1", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            Text("v0.6.7.2", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                         }
                         Text("Tus historias, llevadas a la vida.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -377,35 +377,72 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
         }
     }
     val display = remember(current.title, current.author) { BookPresenter.present(current) }
-    var prepared by remember(current.id) { mutableStateOf<ReaderPrepared?>(null) }
+    var chunks by remember(current.id) { mutableStateOf<List<ReadingChunk>>(emptyList()) }
+    var analyzedStructure by remember(current.id) { mutableStateOf<BookStructure?>(null) }
     var preparationError by remember(current.id) { mutableStateOf<String?>(null) }
+
     LaunchedEffect(current.id, current.content) {
+        preparationError = null
+        analyzedStructure = null
+        chunks = emptyList()
+
+        // Make the readable surface available first. Chapter analysis can be much heavier
+        // for OCR-recovered books and must never block the whole reader from opening.
+        val chunkResult = runCatching {
+            withContext(Dispatchers.Default) {
+                ReadingChunker.chunk(current.content, maxChars = 700)
+            }
+        }
+        chunkResult.onFailure {
+            preparationError = it.message ?: "No se pudieron preparar las páginas."
+        }
+        val readyChunks = chunkResult.getOrNull() ?: return@LaunchedEffect
+        chunks = readyChunks
+
+        if (current.content.isNotBlank() && readyChunks.isEmpty()) {
+            preparationError = "El libro no contiene texto legible para mostrar."
+            return@LaunchedEffect
+        }
+
+        // Deliberately run structure discovery after publishing chunks. Compose can now
+        // render/navigate immediately while headings and readingStart are discovered.
         runCatching {
             withContext(Dispatchers.Default) {
-                ReaderPrepared(
-                    structure = BookStructureAnalyzer.analyze(current.content),
-                    chunks = ReadingChunker.chunk(current.content, maxChars = 700)
-                )
+                BookStructureAnalyzer.analyze(current.content)
             }
-        }.onSuccess { prepared = it }
-            .onFailure { preparationError = it.message ?: "No se pudo preparar la lectura." }
+        }.onSuccess {
+            analyzedStructure = it
+        }.onFailure {
+            // Chapter detection is an enhancement, not a prerequisite for opening a book.
+            analyzedStructure = BookStructure(
+                chapters = listOf(BookChapter("Inicio", 0)),
+                readingStart = 0
+            )
+        }
     }
-    val readerPrepared = prepared ?: return Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-        if (preparationError == null) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator()
-                Spacer(Modifier.height(12.dp))
-                Text("Preparando páginas…")
-            }
-        } else {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(preparationError!!, color = MaterialTheme.colorScheme.error)
-                TextButton(onClick = back) { Text("Volver") }
+
+    if (chunks.isEmpty() && current.content.isNotBlank()) {
+        return Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+            if (preparationError == null) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator()
+                    Spacer(Modifier.height(12.dp))
+                    Text("Preparando texto…")
+                }
+            } else {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(preparationError!!, color = MaterialTheme.colorScheme.error)
+                    TextButton(onClick = back) { Text("Volver") }
+                }
             }
         }
     }
-    val structure = readerPrepared.structure
-    val chunks = readerPrepared.chunks
+
+    val chaptersAnalyzing = analyzedStructure == null
+    val structure = analyzedStructure ?: BookStructure(
+        chapters = listOf(BookChapter("Inicio", 0)),
+        readingStart = 0
+    )
     val chapters = structure.chapters
     val initialResumePosition = remember(current.id, current.progressChars) {
         ReadingPositionResolver.resumeStart(current.content, current.progressChars)
@@ -569,7 +606,7 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
         ModalBottomSheet(onDismissRequest = { showChapters = false }) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
                 Text("Capítulos", style = MaterialTheme.typography.headlineSmall)
-                Text("${chapters.size} capítulos / secciones detectados", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (chaptersAnalyzing) "Analizando capítulos…" else "${chapters.size} capítulos / secciones detectados", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(12.dp))
                 LazyColumn(Modifier.fillMaxWidth().heightIn(max = 520.dp)) {
                     items(chapters, key = { it.start }) { chapter ->
