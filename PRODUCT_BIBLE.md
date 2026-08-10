@@ -103,6 +103,12 @@ Turn books the user already owns into a private, immersive reading and listening
 - Reader text is directly addressable: tapping a sentence may start narration from that canonical position.
 - Tap-to-narrate must preserve canonical text offsets, progress, chapters and background narration.
 
+### v0.6.7 — Guided Reading
+- Talevane is narration-first: the reading view uses one compact fixed font size rather than reader typography controls.
+- Direct text navigation resolves taps to canonical word positions.
+- While narration is active, the currently spoken range should be highlighted and the reader should follow it when the TTS engine provides timing metadata.
+- Voice downloads are delegated to the installed Android TTS engine through its supported system installer; Talevane ranks and selects available voices but does not redistribute proprietary voice data.
+
 ## Roadmap
 v0.7 Context AI and narration direction
 v0.8 Neural narrator integration, voice packs, sentence highlighting and deeper audiobook controls

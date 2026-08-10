@@ -53,6 +53,8 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
 
         const val EXTRA_BOOK_ID = "book_id"
         const val EXTRA_POSITION = "position"
+        const val EXTRA_HIGHLIGHT_START = "highlight_start"
+        const val EXTRA_HIGHLIGHT_END = "highlight_end"
         const val EXTRA_RATE = "rate"
         const val EXTRA_TITLE = "title"
         const val EXTRA_AUTHOR = "author"
@@ -90,6 +92,8 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
     private var currentAuthor = ""
     private var currentContent = ""
     private var currentPosition = 0
+    private var highlightStart = -1
+    private var highlightEnd = -1
     private var speechRate = 1.0f
     private var ambientVolume = 0.38f
     private var currentVoiceMode = VoiceMode.AUTO
@@ -266,14 +270,19 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
 
             override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
                 val chunk = utteranceId?.let(chunkPositions::get) ?: return
-                val absolute = (chunk.start + start).coerceAtMost(chunk.end)
-                if (absolute - lastReportedPosition >= 80) {
-                    lastReportedPosition = absolute
-                    currentPosition = absolute
+                val absoluteStart = (chunk.start + start).coerceIn(chunk.start, chunk.end)
+                val absoluteEnd = (chunk.start + end).coerceIn(absoluteStart, chunk.end)
+                currentPosition = absoluteStart
+                highlightStart = absoluteStart
+                highlightEnd = absoluteEnd
+
+                // Karaoke needs every timing range, but Room does not need a write for every word.
+                if (kotlin.math.abs(absoluteStart - lastReportedPosition) >= 80) {
+                    lastReportedPosition = absoluteStart
                     updateAmbientMood()
                     persistPosition()
-                    mainHandler.post { publishState() }
                 }
+                mainHandler.post { publishState() }
             }
         })
         ttsReady = true
@@ -316,6 +325,8 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         currentContent = book.content
         ambientSound.setBookIdentity(book.id, book.title, book.author)
         currentPosition = requestedPosition.coerceIn(0, currentContent.length)
+        highlightStart = -1
+        highlightEnd = -1
         currentVoiceMode = VoicePreferenceStore.get(this, book.id)
         applyVoiceProfile()
         lastReportedPosition = currentPosition
@@ -381,6 +392,8 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         pendingStart = false
         tts?.stop()
         isSpeaking = false
+        highlightStart = -1
+        highlightEnd = -1
         ambientSound.pause()
         persistPosition()
         updatePlaybackState()
@@ -401,6 +414,8 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         pendingStart = false
         tts?.stop()
         isSpeaking = false
+        highlightStart = -1
+        highlightEnd = -1
         ambientSound.pause()
         persistPosition()
         updatePlaybackState()
@@ -600,6 +615,8 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                 .setPackage(packageName)
                 .putExtra(EXTRA_BOOK_ID, currentBookId)
                 .putExtra(EXTRA_POSITION, currentPosition)
+                .putExtra(EXTRA_HIGHLIGHT_START, highlightStart)
+                .putExtra(EXTRA_HIGHLIGHT_END, highlightEnd)
                 .putExtra(EXTRA_RATE, speechRate)
                 .putExtra(EXTRA_TITLE, currentTitle)
                 .putExtra(EXTRA_AUTHOR, currentAuthor)
