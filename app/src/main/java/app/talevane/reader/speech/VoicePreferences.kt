@@ -60,7 +60,8 @@ object AuthorVoiceProfile {
         "albert", "fedor", "fyodor", "gabriel", "miguel", "jose", "jorge", "julio", "pablo",
         "franz", "george", "ernest", "leo", "lev", "victor", "charles", "jules", "william",
         "oscar", "friedrich", "arthur", "hermann", "haruki", "stephen", "mark", "antoine",
-        "robert", "john", "james", "edgar", "anton", "alexandre", "alejandro", "carlos"
+        "robert", "john", "james", "edgar", "anton", "alexandre", "alejandro", "carlos",
+        "howard", "lovecraft", "h p", "hp"
     )
 
     private val feminineNames = setOf(
@@ -112,14 +113,17 @@ object AuthorVoiceProfile {
                 return VoiceProfileResult(requested, effective, label, savedVoice.name)
             }
 
-            val tagged = selectTaggedVoice(engine, effective)
-            if (tagged != null) {
-                engine.voice = tagged
+            val recommended = selectRecommendedVoice(engine, effective)
+            if (recommended != null) {
+                engine.voice = recommended
                 val base = if (effective == VoiceMode.MASCULINE) "masculina" else "femenina"
-                val label = if (requested == VoiceMode.AUTO) "Auto · $base detectada" else "${base.replaceFirstChar { it.uppercase() }} · detectada"
-                return VoiceProfileResult(requested, effective, label, tagged.name)
+                val identified = detectedGender(recommended) == effective
+                val suffix = if (identified) "recomendada" else "recomendada · sexo no verificado"
+                val label = if (requested == VoiceMode.AUTO) "Auto · $base $suffix" else "${base.replaceFirstChar { it.uppercase() }} · $suffix"
+                return VoiceProfileResult(requested, effective, label, recommended.name)
             }
 
+            // Do not pretend pitch changes prove speaker sex. This remains only a last-resort hint.
             engine.setPitch(if (effective == VoiceMode.MASCULINE) 0.96f else 1.04f)
             val base = if (effective == VoiceMode.MASCULINE) "masculina" else "femenina"
             val label = if (requested == VoiceMode.AUTO) "Auto · $base aproximada" else "${base.replaceFirstChar { it.uppercase() }} · aproximada"
@@ -130,14 +134,16 @@ object AuthorVoiceProfile {
         return VoiceProfileResult(requested, effective, label, defaultVoice?.name)
     }
 
-    private fun selectTaggedVoice(engine: TextToSpeech, target: VoiceMode): Voice? {
+    private fun selectRecommendedVoice(engine: TextToSpeech, target: VoiceMode): Voice? {
         val currentLanguage = engine.voice?.locale?.language
         return engine.voices
             ?.asSequence()
             ?.filter { currentLanguage == null || it.locale.language == currentLanguage }
-            ?.filter { detectedGender(it) == target }
-            ?.sortedWith(compareBy<Voice> { it.isNetworkConnectionRequired }.thenByDescending { it.quality })
+            ?.map { it to VoiceQualityHeuristics.assess(it, target) }
+            ?.filter { (_, assessment) -> assessment.recommended }
+            ?.sortedByDescending { (_, assessment) -> assessment.score }
             ?.firstOrNull()
+            ?.first
     }
 
     private fun normalize(value: String): String {
