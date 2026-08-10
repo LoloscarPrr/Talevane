@@ -25,7 +25,8 @@ private data class VoiceOption(
     val voice: Voice,
     val title: String,
     val subtitle: String,
-    val detectedMode: VoiceMode?
+    val detectedMode: VoiceMode?,
+    val assessment: VoiceAssessment
 )
 
 class VoiceLabActivity : ComponentActivity() {
@@ -45,7 +46,10 @@ class VoiceLabActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         bookId = intent.getLongExtra(EXTRA_BOOK_ID, -1L)
-        desiredMode = intent.getStringExtra(EXTRA_MODE)?.let { raw -> runCatching { VoiceMode.valueOf(raw) }.getOrNull() } ?: VoiceMode.MASCULINE
+        desiredMode = intent.getStringExtra(EXTRA_MODE)?.let { raw ->
+            runCatching { VoiceMode.valueOf(raw) }.getOrNull()
+        } ?: VoiceMode.MASCULINE
+
         if (bookId < 0 || (desiredMode != VoiceMode.MASCULINE && desiredMode != VoiceMode.FEMININE)) {
             finish()
             return
@@ -88,30 +92,26 @@ class VoiceLabActivity : ComponentActivity() {
             return
         }
 
-        val sorted = source.sortedWith(
-            compareByDescending<Voice> { AuthorVoiceProfile.detectedGender(it) == desiredMode }
-                .thenBy { it.isNetworkConnectionRequired }
-                .thenByDescending { it.quality }
-                .thenBy { it.locale.toLanguageTag() }
-                .thenBy { it.name }
-        )
+        val assessed = source.map { voice -> voice to VoiceQualityHeuristics.assess(voice, desiredMode) }
+            .sortedWith(
+                compareByDescending<Pair<Voice, VoiceAssessment>> { it.second.recommended }
+                    .thenByDescending { it.second.score }
+                    .thenBy { it.first.locale.toLanguageTag() }
+                    .thenBy { it.first.name }
+            )
+
         val counters = mutableMapOf<String, Int>()
         options.clear()
-        sorted.forEach { voice ->
+        assessed.forEach { (voice, assessment) ->
             val localeTag = voice.locale.toLanguageTag()
             val index = (counters[localeTag] ?: 0) + 1
             counters[localeTag] = index
-            val connection = if (voice.isNetworkConnectionRequired) "requiere internet" else "offline"
-            val quality = when {
-                voice.quality >= Voice.QUALITY_VERY_HIGH -> "calidad muy alta"
-                voice.quality >= Voice.QUALITY_HIGH -> "calidad alta"
-                else -> "calidad estándar"
-            }
             options += VoiceOption(
                 voice = voice,
                 title = "${localeTitle(voice.locale)} · Voz $index",
-                subtitle = "$connection · $quality",
-                detectedMode = AuthorVoiceProfile.detectedGender(voice)
+                subtitle = assessment.summary,
+                detectedMode = AuthorVoiceProfile.detectedGender(voice),
+                assessment = assessment
             )
         }
         ready = true
@@ -119,7 +119,8 @@ class VoiceLabActivity : ComponentActivity() {
 
     private fun localeTitle(locale: Locale): String {
         val es = Locale("es")
-        val language = locale.getDisplayLanguage(es).replaceFirstChar { if (it.isLowerCase()) it.titlecase(es) else it.toString() }
+        val language = locale.getDisplayLanguage(es)
+            .replaceFirstChar { if (it.isLowerCase()) it.titlecase(es) else it.toString() }
         val country = locale.getDisplayCountry(es)
         return if (country.isBlank()) language else "$language ($country)"
     }
@@ -129,9 +130,9 @@ class VoiceLabActivity : ComponentActivity() {
         engine.stop()
         engine.voice = option.voice
         engine.setPitch(1.0f)
-        engine.setSpeechRate(1.0f)
+        engine.setSpeechRate(0.96f)
         engine.speak(
-            "Esta es una muestra de voz de Talevane. Puedes escucharla antes de elegir.",
+            "Esta es una muestra de narración de Talevane. Escucha el timbre, la claridad y el ritmo antes de elegir.",
             TextToSpeech.QUEUE_FLUSH,
             null,
             "talevane-voice-preview"
@@ -139,6 +140,8 @@ class VoiceLabActivity : ComponentActivity() {
     }
 
     private fun selectVoice(option: VoiceOption) {
+        val incompatible = option.detectedMode != null && option.detectedMode != desiredMode
+        if (incompatible) return
         tts?.stop()
         selectedVoiceName = option.voice.name
         NarrationClient.chooseVoice(this, bookId, desiredMode, option.voice.name)
@@ -167,6 +170,10 @@ private fun VoiceLabScreen(
     onSelect: (VoiceOption) -> Unit
 ) {
     val desiredLabel = if (mode == VoiceMode.MASCULINE) "masculina" else "femenina"
+    var showAll by rememberSaveable { mutableStateOf(false) }
+    val recommended = options.filter { it.assessment.recommended }
+    val visible = if (showAll || recommended.isEmpty()) options else recommended
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -180,9 +187,31 @@ private fun VoiceLabScreen(
                 Text("Elige una voz $desiredLabel", style = MaterialTheme.typography.headlineSmall)
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Estas son voces reales que informó el motor TTS de tu teléfono. Android no siempre indica su sexo, así que puedes escucharlas antes de guardar una para este libro.",
+                    "Talevane prioriza ahora las voces que parecen más adecuadas para narrar. Si Android no identifica el sexo de una voz, se mostrará como no verificado en vez de adivinar.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                Spacer(Modifier.height(12.dp))
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                    Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                        Text(NarratorFoundation.NEURAL_LABEL, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Arquitectura preparada. En v0.6.5 todavía no se envía texto a servicios externos; la narración activa sigue siendo la del dispositivo.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
+                }
+                if (ready && options.isNotEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("${recommended.size} recomendadas de ${options.size}", style = MaterialTheme.typography.labelLarge)
+                            Text("Puedes abrir el resto si quieres compararlas.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(checked = showAll, onCheckedChange = { showAll = it })
+                    }
+                    Text(if (showAll) "Mostrando todas" else "Solo recomendadas", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                }
             }
 
             if (!ready) {
@@ -193,29 +222,39 @@ private fun VoiceLabScreen(
                         Text(message, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                if (options.isNotEmpty()) {
+                if (visible.isNotEmpty()) {
                     LazyColumn(
                         Modifier.fillMaxSize().padding(horizontal = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                         contentPadding = PaddingValues(bottom = 24.dp)
                     ) {
-                        items(options, key = { it.voice.name }) { option ->
+                        items(visible, key = { it.voice.name }) { option ->
                             val selected = option.voice.name == selectedVoiceName
+                            val incompatible = option.detectedMode != null && option.detectedMode != mode
                             ElevatedCard(Modifier.fillMaxWidth()) {
                                 Column(Modifier.fillMaxWidth().padding(14.dp)) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Column(Modifier.weight(1f)) {
                                             Text(option.title, fontWeight = FontWeight.SemiBold)
+                                            Text(
+                                                if (option.assessment.recommended) "Recomendada para narración" else "Voz del dispositivo · sin recomendación",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = if (option.assessment.recommended) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
                                             Text(option.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             Text(option.voice.name, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         }
                                         if (selected) Icon(Icons.Default.Check, "Voz seleccionada", tint = MaterialTheme.colorScheme.primary)
                                     }
-                                    option.detectedMode?.let { detected ->
-                                        Spacer(Modifier.height(8.dp))
-                                        AssistChip(onClick = {}, label = {
-                                            Text(if (detected == VoiceMode.MASCULINE) "Masculina identificada por el motor" else "Femenina identificada por el motor")
-                                        })
+                                    Spacer(Modifier.height(8.dp))
+                                    when {
+                                        option.detectedMode == VoiceMode.MASCULINE -> AssistChip(onClick = {}, label = { Text("Masculina identificada por el motor") })
+                                        option.detectedMode == VoiceMode.FEMININE -> AssistChip(onClick = {}, label = { Text("Femenina identificada por el motor") })
+                                        else -> AssistChip(onClick = {}, label = { Text("Sexo no verificado · escucha antes de elegir") })
+                                    }
+                                    if (incompatible) {
+                                        Spacer(Modifier.height(6.dp))
+                                        Text("Android identifica esta voz como incompatible con el filtro elegido.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                                     }
                                     Spacer(Modifier.height(10.dp))
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -224,7 +263,7 @@ private fun VoiceLabScreen(
                                             Spacer(Modifier.width(4.dp))
                                             Text("Probar")
                                         }
-                                        Button(onClick = { onSelect(option) }, enabled = !selected) {
+                                        Button(onClick = { onSelect(option) }, enabled = !selected && !incompatible) {
                                             Text(if (selected) "Seleccionada" else "Usar esta voz")
                                         }
                                     }
