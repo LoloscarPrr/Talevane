@@ -314,6 +314,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         currentTitle = book.title
         currentAuthor = book.author
         currentContent = book.content
+        ambientSound.setBookIdentity(book.id, book.title, book.author)
         currentPosition = requestedPosition.coerceIn(0, currentContent.length)
         currentVoiceMode = VoicePreferenceStore.get(this, book.id)
         applyVoiceProfile()

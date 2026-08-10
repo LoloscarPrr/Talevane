@@ -97,6 +97,12 @@ Turn books the user already owns into a private, immersive reading and listening
 - A selected Android voice is only labelled active after the TTS engine accepts it.
 - Prefer genuinely higher-quality/natural system voices when available, while keeping offline fallback.
 
+### v0.6.6 — Book Score + Tap to Narrate
+- Soundtrack identity is per-book, not only per-mood. A stable local book seed creates a recurring musical theme that moods reinterpret.
+- Book identity must affect composition structure (motif, harmony order, accompaniment, tempo/register), not merely transpose the same piece.
+- Reader text is directly addressable: tapping a sentence may start narration from that canonical position.
+- Tap-to-narrate must preserve canonical text offsets, progress, chapters and background narration.
+
 ## Roadmap
 v0.7 Context AI and narration direction
 v0.8 Neural narrator integration, voice packs, sentence highlighting and deeper audiobook controls

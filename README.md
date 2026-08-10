@@ -1,4 +1,11 @@
-# Talevane v0.6.5.1
+# Talevane v0.6.6
+
+## v0.6.6 — Book Score + Tap to Narrate
+- Every book now receives a deterministic local score identity derived from title + author.
+- The book score varies motif, chord movement, accompaniment, register, tempo and piano variant; moods reinterpret that identity instead of sharing one track across the library.
+- Reader text is position-aware: tapping a sentence starts narration from the beginning of that sentence and saves that position.
+- Tap-to-narrate maps directly to canonical character offsets and does not rewrite book text.
+- MIDI playback remains offline and original.
 
 ## v0.6.5.1 — Audio balance & smoother narration
 - Piano output is raised substantially so it remains audible under narration without forcing the listener to concentrate on it.

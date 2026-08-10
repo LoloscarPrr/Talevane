@@ -12,9 +12,9 @@ import kotlin.math.pow
 /**
  * Stable offline piano playback for Talevane.
  *
- * v0.6.5.2 replaces per-sample realtime synthesis with tiny original MIDI arrangements rendered
- * by Android's media framework. This removes the PCM worker from the narration service and avoids
- * underruns, harsh oscillator clipping and timing jitter while the TTS engine is also active.
+ * v0.6.6 adds a book identity to the adaptive score. Mood still directs the scene, but two books
+ * no longer share the same cached arrangement simply because both happen to be in Mystery, Calm,
+ * etc. The book signature is used only as a deterministic local composition seed.
  */
 class AmbientSoundEngine(context: Context) {
     companion object {
@@ -30,11 +30,22 @@ class AmbientSoundEngine(context: Context) {
     @Volatile private var targetMood = ReadingMood.NEUTRAL
     @Volatile private var targetIntensity = 0.2f
     @Volatile private var targetVolume = 0.38f
+    @Volatile private var bookSignature = "talevane-default"
 
-    private var activeMood: ReadingMood? = null
+    private var activeKey: String? = null
     private var activePlayer: MediaPlayer? = null
     private var fadingPlayer: MediaPlayer? = null
     private var fadeGeneration = 0
+
+    fun setBookIdentity(bookId: Long, title: String, author: String) {
+        if (released) return
+        val normalizedTitle = title.trim().lowercase()
+        val normalizedAuthor = author.trim().lowercase()
+        val next = "$normalizedTitle|$normalizedAuthor".takeIf { it != "|" } ?: "book-$bookId"
+        if (next == bookSignature) return
+        bookSignature = next
+        if (shouldPlay) handler.post { transitionTo(targetMood) }
+    }
 
     fun start(mood: ReadingMood, intensity: Float, volume: Float) {
         if (released) return
@@ -73,7 +84,8 @@ class AmbientSoundEngine(context: Context) {
         shouldPlay = true
         handler.post {
             val player = activePlayer
-            if (player == null || activeMood != targetMood) {
+            val expectedKey = playbackKey(targetMood)
+            if (player == null || activeKey != expectedKey) {
                 transitionTo(targetMood)
             } else {
                 applyCurrentGain()
@@ -91,13 +103,16 @@ class AmbientSoundEngine(context: Context) {
             releasePlayer(activePlayer)
             fadingPlayer = null
             activePlayer = null
-            activeMood = null
+            activeKey = null
         }
     }
 
+    private fun playbackKey(mood: ReadingMood): String = "$bookSignature|${mood.name}"
+
     private fun transitionTo(mood: ReadingMood) {
         if (released || !shouldPlay) return
-        if (activeMood == mood && activePlayer != null) {
+        val nextKey = playbackKey(mood)
+        if (activeKey == nextKey && activePlayer != null) {
             applyCurrentGain()
             if (runCatching { activePlayer?.isPlaying == true }.getOrDefault(false).not()) {
                 runCatching { activePlayer?.start() }
@@ -108,7 +123,7 @@ class AmbientSoundEngine(context: Context) {
         val next = createPlayer(mood) ?: return
         val old = activePlayer
         activePlayer = next
-        activeMood = mood
+        activeKey = nextKey
 
         if (old == null) {
             next.setVolume(currentGain(), currentGain())
@@ -145,7 +160,9 @@ class AmbientSoundEngine(context: Context) {
     }
 
     private fun createPlayer(mood: ReadingMood): MediaPlayer? = runCatching {
-        val file = MidiPianoLibrary.fileFor(appContext, mood)
+        val signatureAtCreation = bookSignature
+        val keyAtCreation = "$signatureAtCreation|${mood.name}"
+        val file = MidiPianoLibrary.fileFor(appContext, mood, signatureAtCreation)
         MediaPlayer().apply {
             setAudioAttributes(
                 AudioAttributes.Builder()
@@ -157,9 +174,9 @@ class AmbientSoundEngine(context: Context) {
             isLooping = true
             prepare()
             setOnErrorListener { player, _, _ ->
-                if (activePlayer === player) {
+                if (activePlayer === player && activeKey == keyAtCreation) {
                     activePlayer = null
-                    activeMood = null
+                    activeKey = null
                 }
                 runCatching { player.release() }
                 true
@@ -168,8 +185,8 @@ class AmbientSoundEngine(context: Context) {
     }.getOrNull()
 
     /**
-     * The slider is intentionally perceptual rather than linear. At normal values the piano stays
-     * present beneath speech, while the top of the slider still leaves headroom for the narrator.
+     * Perceptual rather than linear: middle slider values stay audible beneath narration while the
+     * top end keeps enough headroom for speech.
      */
     private fun currentGain(): Float {
         if (!shouldPlay || targetVolume <= 0.001f) return 0f
