@@ -105,7 +105,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         ambientVolume = getSharedPreferences(PREFS_AUDIO, MODE_PRIVATE)
             .getFloat(PREF_AMBIENT_VOLUME, 0.38f)
             .coerceIn(0f, 1f)
-        ambientSound = AmbientSoundEngine().apply { setVolume(ambientVolume) }
+        ambientSound = AmbientSoundEngine(applicationContext).apply { setVolume(ambientVolume) }
 
         createNotificationChannel()
         mediaSession = MediaSessionCompat(this, "TalevaneNarration").apply {
