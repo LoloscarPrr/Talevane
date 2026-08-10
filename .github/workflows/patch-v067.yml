@@ -25,7 +25,6 @@ jobs:
                   app/src/main/java/app/talevane/reader/ui/TalevaneRoot.kt \
                   app/src/main/java/app/talevane/reader/speech/VoiceLabActivity.kt \
                   app/build.gradle.kts \
-                  .github/workflows/build-talevane-from-zip.yml \
                   README.md PRODUCT_BIBLE.md
           git diff --cached --quiet && exit 0
           git commit -m "Integrate Talevane v0.6.7 Guided Reading"
