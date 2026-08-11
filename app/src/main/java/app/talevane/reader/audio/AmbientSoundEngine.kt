@@ -13,8 +13,8 @@ import kotlin.math.pow
  * Stable offline adaptive-score playback for Talevane.
  *
  * The score is generated locally from book identity + mood and played by Android's MIDI engine.
- * v0.6.8 uses a layered ensemble (piano, bass, high lead and drums) with a stronger but still
- * narration-safe master curve.
+ * v0.6.9 adds a post-mix mastering chain to the layered ensemble so piano, bass, solo string and
+ * drums are EQ'd and level-shaped as one soundtrack bus rather than raw MIDI output.
  */
 class AmbientSoundEngine(context: Context) {
     companion object {
@@ -29,13 +29,14 @@ class AmbientSoundEngine(context: Context) {
     @Volatile private var shouldPlay = false
     @Volatile private var targetMood = ReadingMood.NEUTRAL
     @Volatile private var targetIntensity = 0.2f
-    @Volatile private var targetVolume = 0.45f
+    @Volatile private var targetVolume = 0.48f
     @Volatile private var bookSignature = "talevane-default"
 
     private var activeKey: String? = null
     private var activePlayer: MediaPlayer? = null
     private var fadingPlayer: MediaPlayer? = null
     private var fadeGeneration = 0
+    private val masteringChains = mutableMapOf<MediaPlayer, MasteringChain>()
 
     fun setBookIdentity(bookId: Long, title: String, author: String) {
         if (released) return
@@ -104,6 +105,8 @@ class AmbientSoundEngine(context: Context) {
             fadingPlayer = null
             activePlayer = null
             activeKey = null
+            masteringChains.values.forEach { runCatching { it.release() } }
+            masteringChains.clear()
         }
     }
 
@@ -173,26 +176,30 @@ class AmbientSoundEngine(context: Context) {
             setDataSource(file.absolutePath)
             isLooping = true
             prepare()
+
+            // Attach effects only after prepare(), when MediaPlayer owns a valid audio session.
+            masteringChains[this] = MasteringChain.attach(audioSessionId, mood)
+
             setOnErrorListener { player, _, _ ->
                 if (activePlayer === player && activeKey == keyAtCreation) {
                     activePlayer = null
                     activeKey = null
                 }
-                runCatching { player.release() }
+                releasePlayer(player)
                 true
             }
         }
     }.getOrNull()
 
     /**
-     * Stronger perceptual curve than v0.6.7: a middle slider position now has clear musical
-     * presence, while the cap still leaves headroom for speech and avoids full-scale clipping.
+     * The mastering chain already adds density, so this curve provides presence without driving the
+     * MediaPlayer itself to full scale. Loudness/EQ then do the final shaping with headroom intact.
      */
     private fun currentGain(): Float {
         if (!shouldPlay || targetVolume <= 0.001f) return 0f
-        val perceptual = targetVolume.toDouble().pow(0.62).toFloat()
-        val intensityTrim = 0.82f + targetIntensity.coerceIn(0f, 1f) * 0.10f
-        return (perceptual * intensityTrim * 1.14f).coerceIn(0f, 0.94f)
+        val perceptual = targetVolume.toDouble().pow(0.60).toFloat()
+        val intensityTrim = 0.84f + targetIntensity.coerceIn(0f, 1f) * 0.10f
+        return (perceptual * intensityTrim * 1.17f).coerceIn(0f, 0.95f)
     }
 
     private fun applyCurrentGain() {
@@ -205,6 +212,7 @@ class AmbientSoundEngine(context: Context) {
 
     private fun releasePlayer(player: MediaPlayer?) {
         if (player == null) return
+        masteringChains.remove(player)?.let { runCatching { it.release() } }
         runCatching { player.stop() }
         runCatching { player.reset() }
         runCatching { player.release() }
