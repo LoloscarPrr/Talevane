@@ -13,8 +13,8 @@ import kotlin.math.pow
  * Stable offline adaptive-score playback for Talevane.
  *
  * The score is generated locally from book identity + mood and played by Android's MIDI engine.
- * v0.6.9 adds a post-mix mastering chain to the layered ensemble so piano, bass, solo string and
- * drums are EQ'd and level-shaped as one soundtrack bus rather than raw MIDI output.
+ * v0.6.9.1 uses a cleaner post-mix mastering chain so piano, bass, solo string and drums retain
+ * definition instead of being over-compressed or overly heavy in the low mids.
  */
 class AmbientSoundEngine(context: Context) {
     companion object {
@@ -29,7 +29,7 @@ class AmbientSoundEngine(context: Context) {
     @Volatile private var shouldPlay = false
     @Volatile private var targetMood = ReadingMood.NEUTRAL
     @Volatile private var targetIntensity = 0.2f
-    @Volatile private var targetVolume = 0.48f
+    @Volatile private var targetVolume = 0.46f
     @Volatile private var bookSignature = "talevane-default"
 
     private var activeKey: String? = null
@@ -177,7 +177,6 @@ class AmbientSoundEngine(context: Context) {
             isLooping = true
             prepare()
 
-            // Attach effects only after prepare(), when MediaPlayer owns a valid audio session.
             masteringChains[this] = MasteringChain.attach(audioSessionId, mood)
 
             setOnErrorListener { player, _, _ ->
@@ -192,14 +191,14 @@ class AmbientSoundEngine(context: Context) {
     }.getOrNull()
 
     /**
-     * The mastering chain already adds density, so this curve provides presence without driving the
-     * MediaPlayer itself to full scale. Loudness/EQ then do the final shaping with headroom intact.
+     * Clean master curve: enough presence to sit under narration, but with explicit headroom for
+     * the EQ/loudness stage and for transient hits from drums or the solo string.
      */
     private fun currentGain(): Float {
         if (!shouldPlay || targetVolume <= 0.001f) return 0f
-        val perceptual = targetVolume.toDouble().pow(0.60).toFloat()
-        val intensityTrim = 0.84f + targetIntensity.coerceIn(0f, 1f) * 0.10f
-        return (perceptual * intensityTrim * 1.17f).coerceIn(0f, 0.95f)
+        val perceptual = targetVolume.toDouble().pow(0.64).toFloat()
+        val intensityTrim = 0.82f + targetIntensity.coerceIn(0f, 1f) * 0.08f
+        return (perceptual * intensityTrim * 1.05f).coerceIn(0f, 0.86f)
     }
 
     private fun applyCurrentGain() {
