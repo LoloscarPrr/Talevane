@@ -126,6 +126,12 @@ private const val READER_FONT_SIZE_SP = 17f
 private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) {
     val books by repository.books.collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val versionName = remember(context) {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull() ?: "?"
+    }
     var error by remember { mutableStateOf<String?>(null) }
     var importing by remember { mutableStateOf(false) }
     val continueBook = books.firstOrNull { progressOf(it) in 0.001f..0.979f }
@@ -196,7 +202,7 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
                         Row(verticalAlignment = Alignment.Bottom) {
                             Text("Talevane", style = MaterialTheme.typography.headlineLarge)
                             Spacer(Modifier.width(8.dp))
-                            Text("v0.6.9.1", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            Text("v$versionName", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                         }
                         Text("Tus historias, llevadas a la vida.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
