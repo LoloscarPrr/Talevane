@@ -10,11 +10,11 @@ import app.talevane.reader.mood.ReadingMood
 import kotlin.math.pow
 
 /**
- * Stable offline piano playback for Talevane.
+ * Stable offline adaptive-score playback for Talevane.
  *
- * v0.6.6 adds a book identity to the adaptive score. Mood still directs the scene, but two books
- * no longer share the same cached arrangement simply because both happen to be in Mystery, Calm,
- * etc. The book signature is used only as a deterministic local composition seed.
+ * The score is generated locally from book identity + mood and played by Android's MIDI engine.
+ * v0.6.8 uses a layered ensemble (piano, bass, high lead and drums) with a stronger but still
+ * narration-safe master curve.
  */
 class AmbientSoundEngine(context: Context) {
     companion object {
@@ -29,7 +29,7 @@ class AmbientSoundEngine(context: Context) {
     @Volatile private var shouldPlay = false
     @Volatile private var targetMood = ReadingMood.NEUTRAL
     @Volatile private var targetIntensity = 0.2f
-    @Volatile private var targetVolume = 0.38f
+    @Volatile private var targetVolume = 0.45f
     @Volatile private var bookSignature = "talevane-default"
 
     private var activeKey: String? = null
@@ -185,14 +185,14 @@ class AmbientSoundEngine(context: Context) {
     }.getOrNull()
 
     /**
-     * Perceptual rather than linear: middle slider values stay audible beneath narration while the
-     * top end keeps enough headroom for speech.
+     * Stronger perceptual curve than v0.6.7: a middle slider position now has clear musical
+     * presence, while the cap still leaves headroom for speech and avoids full-scale clipping.
      */
     private fun currentGain(): Float {
         if (!shouldPlay || targetVolume <= 0.001f) return 0f
-        val perceptual = targetVolume.toDouble().pow(0.72).toFloat()
-        val intensityTrim = 0.72f + targetIntensity.coerceIn(0f, 1f) * 0.08f
-        return (perceptual * intensityTrim).coerceIn(0f, 0.82f)
+        val perceptual = targetVolume.toDouble().pow(0.62).toFloat()
+        val intensityTrim = 0.82f + targetIntensity.coerceIn(0f, 1f) * 0.10f
+        return (perceptual * intensityTrim * 1.14f).coerceIn(0f, 0.94f)
     }
 
     private fun applyCurrentGain() {
