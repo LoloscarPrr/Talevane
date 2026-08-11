@@ -95,7 +95,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
     private var highlightStart = -1
     private var highlightEnd = -1
     private var speechRate = 1.0f
-    private var ambientVolume = 0.38f
+    private var ambientVolume = 0.45f
     private var currentVoiceMode = VoiceMode.AUTO
     private var voiceProfileLabel = "Auto · sistema"
     private var moodSnapshot = MoodSnapshot(ReadingMood.NEUTRAL, 0.15f, 0.25f)
@@ -107,7 +107,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
     override fun onCreate() {
         super.onCreate()
         ambientVolume = getSharedPreferences(PREFS_AUDIO, MODE_PRIVATE)
-            .getFloat(PREF_AMBIENT_VOLUME, 0.38f)
+            .getFloat(PREF_AMBIENT_VOLUME, 0.45f)
             .coerceIn(0f, 1f)
         ambientSound = AmbientSoundEngine(applicationContext).apply { setVolume(ambientVolume) }
 
