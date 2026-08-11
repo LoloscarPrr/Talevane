@@ -12,7 +12,7 @@ import kotlin.math.max
  * Writes small original Standard MIDI File (type 0) adaptive arrangements.
  *
  * v0.6.8 keeps the stable book-specific score DNA, but expands every mood into a four-layer
- * ensemble: piano harmony, dedicated low bass, a high lead voice and General MIDI percussion.
+ * ensemble: piano harmony, dedicated low bass, a principal solo string voice and General MIDI percussion.
  * The source book text never enters the MIDI file; only the deterministic local book signature is
  * used to make one title sound different from another.
  */
@@ -24,7 +24,7 @@ internal object MidiPianoLibrary {
 
     private const val PIANO_CHANNEL = 0
     private const val BASS_CHANNEL = 1
-    private const val LEAD_CHANNEL = 2
+    private const val STRING_CHANNEL = 2
     private const val DRUM_CHANNEL = 9
 
     private data class Chord(val root: Int, val intervals: IntArray)
@@ -37,7 +37,7 @@ internal object MidiPianoLibrary {
         val velocity: Int,
         val density: Int,
         val bassProgram: Int,
-        val leadProgram: Int
+        val stringProgram: Int
     )
 
     private data class ScoreDna(
@@ -81,7 +81,7 @@ internal object MidiPianoLibrary {
         // Four independent musical layers. Channel 10 (index 9) is General MIDI percussion.
         program(events, PIANO_CHANNEL, dna.pianoProgram)
         program(events, BASS_CHANNEL, profile.bassProgram)
-        program(events, LEAD_CHANNEL, profile.leadProgram)
+        program(events, STRING_CHANNEL, profile.stringProgram)
 
         control(events, PIANO_CHANNEL, 7, 106)
         control(events, PIANO_CHANNEL, 11, 116)
@@ -93,10 +93,10 @@ internal object MidiPianoLibrary {
         control(events, BASS_CHANNEL, 91, 18)
         control(events, BASS_CHANNEL, 10, 50)
 
-        control(events, LEAD_CHANNEL, 7, 100)
-        control(events, LEAD_CHANNEL, 11, 114)
-        control(events, LEAD_CHANNEL, 91, (dna.reverb + 16).coerceAtMost(92))
-        control(events, LEAD_CHANNEL, 10, 78)
+        control(events, STRING_CHANNEL, 7, 106)
+        control(events, STRING_CHANNEL, 11, 118)
+        control(events, STRING_CHANNEL, 91, (dna.reverb + 22).coerceAtMost(98))
+        control(events, STRING_CHANNEL, 10, 78)
 
         control(events, DRUM_CHANNEL, 7, 96)
         control(events, DRUM_CHANNEL, 11, 110)
@@ -119,7 +119,7 @@ internal object MidiPianoLibrary {
             writeLeftHand(events, chord, barStart, beatTicks, profile, dna, accent)
             writeRightHand(events, chord, barStart, beatTicks, profile, dna, accent, bar)
             writeBass(events, chord, barStart, beatTicks, profile, dna, accent, mood)
-            writeLead(events, profile, dna, barStart, beatTicks, bar, accent, mood)
+            writeStringLead(events, profile, dna, barStart, beatTicks, bar, accent, mood)
             writeDrums(events, barStart, beatTicks, bar, profile, dna, mood)
         }
 
@@ -130,7 +130,7 @@ internal object MidiPianoLibrary {
             profile.scale,
             cadenceDegree.coerceAtLeast(0)
         )
-        note(events, endTick - beatTicks, endTick - 30, cadencePitch, profile.velocity + 2, LEAD_CHANNEL)
+        note(events, endTick - beatTicks, endTick - 30, cadencePitch, profile.velocity + 2, STRING_CHANNEL)
 
         val cadenceRoot = profile.chords.first().root + dna.transpose + 12 + dna.registerShift
         note(events, endTick - beatTicks, endTick - 30, cadenceRoot, profile.velocity - 6, PIANO_CHANNEL)
@@ -304,7 +304,7 @@ internal object MidiPianoLibrary {
         }
     }
 
-    private fun writeLead(
+    private fun writeStringLead(
         events: MutableList<MidiEvent>,
         profile: Profile,
         dna: ScoreDna,
@@ -314,35 +314,72 @@ internal object MidiPianoLibrary {
         accent: Int,
         mood: ReadingMood
     ) {
-        for (half in 0..1) {
-            val slot = bar * 2 + half
-            val baseIndex = (slot + dna.melodyRotation) % profile.melody.size
+        // One dedicated solo-string voice carries the emotional theme. It deliberately does not
+        // mirror the piano rhythm: long bows, answers and short runs make the arrangement breathe.
+        fun degreeFor(slot: Int, shift: Int = 0): Int? {
+            val baseIndex = (slot + dna.melodyRotation).mod(profile.melody.size)
             val baseDegree = profile.melody[baseIndex]
             val themeIndex = if ((bar / 8) % 2 == 0) {
-                slot % dna.theme.size
+                slot.mod(dna.theme.size)
             } else {
-                dna.theme.lastIndex - (slot % dna.theme.size)
+                dna.theme.lastIndex - slot.mod(dna.theme.size)
             }
             val themeDegree = dna.theme[themeIndex]
-            if (baseDegree < 0 || themeDegree < 0) continue
+            if (baseDegree < 0 || themeDegree < 0) return null
+            return ((baseDegree + themeDegree) / 2 + dna.melodyShift + shift).coerceIn(0, 13)
+        }
 
-            val degree = ((baseDegree + themeDegree) / 2 + dna.melodyShift).coerceIn(0, 12)
-            val start = barStart + half * beatTicks * 2
-            // Always keep the principal lead above the piano, even for books whose DNA shifts down.
-            val root = profile.keyRoot + dna.transpose + 24 + dna.registerShift / 2
+        fun bow(beat: Double, lengthBeats: Double, slot: Int, shift: Int = 0, velocityDelta: Int = 0) {
+            val degree = degreeFor(slot, shift) ?: return
+            val root = profile.keyRoot + dna.transpose + 17 + dna.registerShift / 3
             val pitch = scaleNote(root, profile.scale, degree)
-            val duration = when (mood) {
-                ReadingMood.TENSION, ReadingMood.ACTION -> beatTicks + beatTicks / 5
-                ReadingMood.MELANCHOLY, ReadingMood.CALM -> beatTicks + beatTicks * 3 / 4
-                else -> beatTicks + beatTicks / 2
+            val start = barStart + (beat * beatTicks).toInt()
+            val end = (start + lengthBeats * beatTicks).toInt().coerceAtMost(barStart + beatTicks * 4 - 20)
+            val stringVelocity = (profile.velocity + 10 + accent + velocityDelta).coerceIn(38, 94)
+            note(events, start, end, pitch, stringVelocity, STRING_CHANNEL)
+        }
+
+        val phrase = bar * 3
+        when (mood) {
+            ReadingMood.CALM -> {
+                bow(0.0, 2.7, phrase, velocityDelta = -6)
+                if (bar % 2 == 1) bow(3.0, 0.8, phrase + 1, shift = -1, velocityDelta = -12)
             }
-            val leadVelocity = when (mood) {
-                ReadingMood.CALM, ReadingMood.MELANCHOLY -> profile.velocity + 6
-                ReadingMood.MYSTERY, ReadingMood.REFLECTIVE -> profile.velocity + 8
-                ReadingMood.TENSION, ReadingMood.ACTION -> profile.velocity + 12
-                else -> profile.velocity + 9
+            ReadingMood.MELANCHOLY -> {
+                bow(0.0, 3.0, phrase, shift = 1, velocityDelta = -5)
+                bow(3.05, 0.75, phrase + 1, shift = -1, velocityDelta = -10)
             }
-            note(events, start, start + duration, pitch, leadVelocity + accent, LEAD_CHANNEL)
+            ReadingMood.MYSTERY -> {
+                bow(0.0, 2.35, phrase, velocityDelta = -3)
+                bow(2.55, 0.65, phrase + 1, shift = if (bar % 2 == 0) 1 else -1, velocityDelta = -8)
+                if (bar % 4 == 3) bow(3.35, 0.45, phrase + 2, shift = 2, velocityDelta = -12)
+            }
+            ReadingMood.REFLECTIVE -> {
+                bow(0.0, 1.65, phrase, velocityDelta = -4)
+                bow(2.0, 1.55, phrase + 1, shift = if (bar % 2 == 0) 1 else -1, velocityDelta = -7)
+            }
+            ReadingMood.WARMTH -> {
+                bow(0.0, 1.25, phrase, velocityDelta = -2)
+                bow(1.55, 1.10, phrase + 1, shift = 1, velocityDelta = -5)
+                bow(2.9, 0.85, phrase + 2, shift = 2, velocityDelta = -7)
+            }
+            ReadingMood.NEUTRAL -> {
+                bow(0.0, 1.7, phrase, velocityDelta = -3)
+                bow(2.0, 1.55, phrase + 1, velocityDelta = -7)
+            }
+            ReadingMood.TENSION -> {
+                bow(0.0, 0.72, phrase, velocityDelta = 4)
+                bow(1.0, 0.72, phrase + 1, shift = 1, velocityDelta = 1)
+                bow(2.0, 0.72, phrase + 2, shift = -1, velocityDelta = 4)
+                bow(3.0, 0.72, phrase + 3, shift = if (bar % 2 == 0) 1 else 2, velocityDelta = 2)
+            }
+            ReadingMood.ACTION -> {
+                val shifts = intArrayOf(0, 1, 2, 1, 0, -1)
+                for (i in shifts.indices) {
+                    val beat = i * (4.0 / shifts.size)
+                    bow(beat, 0.48, phrase + i, shift = shifts[i], velocityDelta = 6 - (i % 2) * 3)
+                }
+            }
         }
     }
 
@@ -523,13 +560,13 @@ internal object MidiPianoLibrary {
     }
 
     private fun profile(mood: ReadingMood): Profile = when (mood) {
-        ReadingMood.NEUTRAL -> Profile(60, 60, major, listOf(cMaj, aMin, fMaj, gMaj), intArrayOf(0, REST, 2, REST, 4, REST, 2, REST), 54, 1, 32, 73)
-        ReadingMood.CALM -> Profile(54, 62, major, listOf(dMaj, bMin, gMaj, aMaj), intArrayOf(4, REST, 2, REST, 1, REST, 4, REST), 50, 1, 32, 73)
-        ReadingMood.REFLECTIVE -> Profile(58, 64, minor, listOf(eMin, cMaj, gMaj, dMaj), intArrayOf(0, 4, REST, 2, 5, REST, 4, REST), 52, 2, 32, 46)
-        ReadingMood.MELANCHOLY -> Profile(50, 57, minor, listOf(aMin, fMaj, cMaj, gMaj), intArrayOf(5, 4, 2, REST, 1, 0, REST, 2), 49, 1, 32, 40)
-        ReadingMood.MYSTERY -> Profile(56, 62, darkMinor, listOf(dMin, bbMaj, eDim, aMaj), intArrayOf(0, REST, 1, 4, REST, 2, 6, REST), 50, 1, 32, 68)
-        ReadingMood.TENSION -> Profile(72, 62, darkMinor, listOf(dMin, ebMaj, gMin, aMaj), intArrayOf(0, 1, 0, 4, 0, 1, 5, 4), 56, 3, 33, 80)
-        ReadingMood.ACTION -> Profile(96, 64, minor, listOf(eMin, cMaj, gMaj, dMaj), intArrayOf(0, 2, 4, 5, 4, 2, 6, 5), 60, 3, 33, 81)
+        ReadingMood.NEUTRAL -> Profile(60, 60, major, listOf(cMaj, aMin, fMaj, gMaj), intArrayOf(0, REST, 2, REST, 4, REST, 2, REST), 54, 1, 32, 40)
+        ReadingMood.CALM -> Profile(54, 62, major, listOf(dMaj, bMin, gMaj, aMaj), intArrayOf(4, REST, 2, REST, 1, REST, 4, REST), 50, 1, 32, 40)
+        ReadingMood.REFLECTIVE -> Profile(58, 64, minor, listOf(eMin, cMaj, gMaj, dMaj), intArrayOf(0, 4, REST, 2, 5, REST, 4, REST), 52, 2, 32, 41)
+        ReadingMood.MELANCHOLY -> Profile(50, 57, minor, listOf(aMin, fMaj, cMaj, gMaj), intArrayOf(5, 4, 2, REST, 1, 0, REST, 2), 49, 1, 32, 42)
+        ReadingMood.MYSTERY -> Profile(56, 62, darkMinor, listOf(dMin, bbMaj, eDim, aMaj), intArrayOf(0, REST, 1, 4, REST, 2, 6, REST), 50, 1, 32, 41)
+        ReadingMood.TENSION -> Profile(72, 62, darkMinor, listOf(dMin, ebMaj, gMin, aMaj), intArrayOf(0, 1, 0, 4, 0, 1, 5, 4), 56, 3, 33, 40)
+        ReadingMood.ACTION -> Profile(96, 64, minor, listOf(eMin, cMaj, gMaj, dMaj), intArrayOf(0, 2, 4, 5, 4, 2, 6, 5), 60, 3, 33, 40)
         ReadingMood.WARMTH -> Profile(62, 67, major, listOf(gMaj, cMaj, eMin, dMaj), intArrayOf(4, 2, 0, 2, 5, 4, 2, REST), 54, 2, 32, 40)
     }
 

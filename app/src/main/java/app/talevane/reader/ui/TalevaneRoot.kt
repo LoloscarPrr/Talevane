@@ -75,7 +75,7 @@ private data class NarrationUiState(
     val speaking: Boolean = false,
     val ready: Boolean = false,
     val error: String? = null,
-    val ambientVolume: Float = 0.30f,
+    val ambientVolume: Float = 0.45f,
     val ambientActive: Boolean = false,
     val mood: ReadingMood? = null,
     val moodIntensity: Float = 0.15f,
@@ -196,7 +196,7 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
                         Row(verticalAlignment = Alignment.Bottom) {
                             Text("Talevane", style = MaterialTheme.typography.headlineLarge)
                             Spacer(Modifier.width(8.dp))
-                            Text("v0.6.7.2", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            Text("v0.6.8", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                         }
                         Text("Tus historias, llevadas a la vida.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -451,7 +451,7 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
     var manualPosition by remember(current.id) { mutableIntStateOf(initialResumePosition) }
     var followedChunkIndex by remember(current.id) { mutableIntStateOf(-1) }
     var speechRate by rememberSaveable(current.id) { mutableFloatStateOf(1.0f) }
-    var ambientVolume by rememberSaveable(current.id) { mutableFloatStateOf(0.30f) }
+    var ambientVolume by rememberSaveable(current.id) { mutableFloatStateOf(0.45f) }
     var voiceMode by remember(current.id) { mutableStateOf(VoicePreferenceStore.get(context, current.id)) }
 
     DisposableEffect(current.id) {
@@ -471,7 +471,7 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                     speaking = intent.getBooleanExtra(NarrationService.EXTRA_SPEAKING, false),
                     ready = intent.getBooleanExtra(NarrationService.EXTRA_READY, false),
                     error = intent.getStringExtra(NarrationService.EXTRA_ERROR),
-                    ambientVolume = intent.getFloatExtra(NarrationService.EXTRA_AMBIENT_VOLUME, 0.30f),
+                    ambientVolume = intent.getFloatExtra(NarrationService.EXTRA_AMBIENT_VOLUME, 0.45f),
                     ambientActive = intent.getBooleanExtra(NarrationService.EXTRA_AMBIENT_ACTIVE, false),
                     mood = mood,
                     moodIntensity = intent.getFloatExtra(NarrationService.EXTRA_MOOD_INTENSITY, 0.15f),
@@ -703,8 +703,8 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                                 style = MaterialTheme.typography.labelLarge
                             )
                             Text(
-                                if (ambientIsPlaying) "Piano · ${moodSnapshot.mood.label} · sonando"
-                                else "Piano · ${moodSnapshot.mood.label}",
+                                if (ambientIsPlaying) "Música · ${moodSnapshot.mood.label} · sonando"
+                                else "Música · ${moodSnapshot.mood.label}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary,
                                 maxLines = 1,
@@ -768,7 +768,7 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                         Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 1.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.VolumeDown, "Volumen de piano", modifier = Modifier.size(20.dp))
+                        Icon(Icons.Default.VolumeDown, "Volumen de música", modifier = Modifier.size(20.dp))
                         Slider(
                             value = ambientVolume,
                             onValueChange = { ambientVolume = it },
