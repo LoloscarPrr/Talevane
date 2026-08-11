@@ -436,15 +436,15 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun buildChunks(text: String, startPosition: Int): List<SpeechChunk> {
-        val maxChunk = 3400
-        val minimumUsefulSplit = 1500
+        val maxChunk = 1800
+        val minimumUsefulSplit = 700
         val result = mutableListOf<SpeechChunk>()
         var cursor = startPosition.coerceIn(0, text.length)
 
         while (cursor < text.length) {
             var end = (cursor + maxChunk).coerceAtMost(text.length)
             if (end < text.length) {
-                // Split on real punctuation only. PDF line wrapping must never create a speech break.
+                // Prefer sentence/phrase punctuation so each queued utterance keeps stable prosody.
                 val split = text.lastIndexOfAny(charArrayOf('.', '!', '?', ';', ':'), end - 1)
                 if (split >= cursor + minimumUsefulSplit) end = split + 1
             }
@@ -458,9 +458,9 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
 
     /**
      * Builds a TTS-only view of the canonical text without changing its length.
-     * PDF layout line/paragraph breaks become spaces. Talevane never invents punctuation:
-     * only punctuation already present in the canonical source controls TTS cadence.
-     * Keeping one output char per source char preserves TextToSpeech range -> canonical mapping.
+     * Single PDF layout wraps stay as spaces, while true paragraph gaps get a soft comma pause.
+     * A short heading/page marker ending in a number also gets that pause so the following prose
+     * is not rushed into it. Keeping one output char per source char preserves TTS range mapping.
      */
     private fun prepareSpeechText(raw: String): String {
         if (raw.none { it == '\n' || it == '\r' || it == '\t' }) return raw
@@ -484,10 +484,18 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                         runEnd += 1
                     }
 
-                    // Never invent punctuation for PDF layout. Real punctuation already present
-                    // in the canonical source drives cadence; visual line/paragraph breaks become spaces.
-                    // This keeps offsets one-to-one while avoiding the hard, "hit" pauses some PDFs caused.
-                    chars[runStart] = ' '
+                    val before = raw.getOrNull(runStart - 1)
+                    val after = raw.getOrNull(runEnd)
+                    val previousLineStart = raw.lastIndexOf('\n', (runStart - 1).coerceAtLeast(0)).let { it + 1 }
+                    val previousLine = raw.substring(previousLineStart, runStart).trim()
+                    val shortNumericMarker = logicalBreaks == 1 &&
+                        previousLine.length in 1..48 &&
+                        previousLine.lastOrNull()?.isDigit() == true
+                    val alreadyPunctuated = before != null && before in ".!?;:,"
+                    val canPause = before != null && !before.isWhitespace() && after != null && !after.isWhitespace()
+                    val softPause = canPause && !alreadyPunctuated && (logicalBreaks >= 2 || shortNumericMarker)
+
+                    chars[runStart] = if (softPause) ',' else ' '
                     for (j in runStart + 1 until runEnd) chars[j] = ' '
                     i = runEnd
                 }
