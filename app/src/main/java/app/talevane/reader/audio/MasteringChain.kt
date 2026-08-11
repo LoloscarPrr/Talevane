@@ -1,29 +1,20 @@
 package app.talevane.reader.audio
 
-import android.media.audiofx.BassBoost
 import android.media.audiofx.Equalizer
-import android.media.audiofx.LoudnessEnhancer
 import app.talevane.reader.mood.ReadingMood
 
 /**
- * Clean post-mix mastering for the generated soundtrack.
+ * Headroom-first post-mix EQ for the generated soundtrack.
  *
- * The MIDI synth renders piano, bass, solo string and drums first. This chain then makes small,
- * broad tonal corrections on that complete music bus. v0.6.9.1 deliberately keeps processing
- * conservative: clarity and headroom matter more than loudness. Unsupported vendor effects simply
- * fall back to the dry mix instead of breaking narration playback.
+ * v0.6.9.2 removes BassBoost and LoudnessEnhancer completely. The MIDI arrangement already has
+ * several simultaneous layers, so the master is now strictly subtractive: it may trim frequencies,
+ * but it never adds gain. This avoids device-specific clipping from stacked Android audio effects.
  */
 internal class MasteringChain private constructor(
-    private val equalizer: Equalizer?,
-    private val bassBoost: BassBoost?,
-    private val loudnessEnhancer: LoudnessEnhancer?
+    private val equalizer: Equalizer?
 ) {
     fun release() {
-        runCatching { loudnessEnhancer?.enabled = false }
-        runCatching { bassBoost?.enabled = false }
         runCatching { equalizer?.enabled = false }
-        runCatching { loudnessEnhancer?.release() }
-        runCatching { bassBoost?.release() }
         runCatching { equalizer?.release() }
     }
 
@@ -36,21 +27,7 @@ internal class MasteringChain private constructor(
                 }
             }.getOrNull()
 
-            val bass = runCatching {
-                BassBoost(0, audioSessionId).apply {
-                    if (strengthSupported) setStrength(bassStrength(mood).toShort())
-                    enabled = true
-                }
-            }.getOrNull()
-
-            val loudness = runCatching {
-                LoudnessEnhancer(audioSessionId).apply {
-                    setTargetGain(loudnessGainMb(mood))
-                    enabled = true
-                }
-            }.getOrNull()
-
-            return MasteringChain(eq, bass, loudness)
+            return MasteringChain(eq)
         }
 
         private fun applyCurve(equalizer: Equalizer, mood: ReadingMood) {
@@ -68,35 +45,33 @@ internal class MasteringChain private constructor(
         }
 
         /**
-         * Gentle tonal balance in millibels. 100 mB = 1 dB. The first v0.6.9 master accumulated
-         * too much energy below 1 kHz; this revision clears low mids and restores presence/air.
+         * Subtractive-only tonal balance in millibels. 100 mB = 1 dB.
+         * No band is ever boosted above 0 dB.
          */
         private fun targetBandGainMb(hz: Float, mood: ReadingMood): Int {
             val sub = when (mood) {
-                ReadingMood.ACTION, ReadingMood.TENSION -> 35
-                ReadingMood.MYSTERY -> 15
-                else -> 0
+                ReadingMood.ACTION, ReadingMood.TENSION -> -90
+                ReadingMood.MYSTERY -> -110
+                else -> -120
             }
             val lowMid = when (mood) {
-                ReadingMood.MYSTERY, ReadingMood.MELANCHOLY -> -115
-                ReadingMood.TENSION -> -95
-                else -> -75
+                ReadingMood.MYSTERY, ReadingMood.MELANCHOLY -> -150
+                ReadingMood.TENSION -> -135
+                else -> -120
             }
             val mid = when (mood) {
-                ReadingMood.MYSTERY -> -70
-                ReadingMood.MELANCHOLY -> -55
-                else -> -40
+                ReadingMood.MYSTERY -> -80
+                ReadingMood.MELANCHOLY -> -70
+                else -> -60
             }
             val presence = when (mood) {
-                ReadingMood.ACTION, ReadingMood.TENSION -> 105
-                ReadingMood.MYSTERY -> 95
-                ReadingMood.REFLECTIVE -> 90
-                else -> 80
+                ReadingMood.ACTION, ReadingMood.TENSION -> 0
+                ReadingMood.MYSTERY -> -10
+                else -> -20
             }
             val air = when (mood) {
-                ReadingMood.CALM, ReadingMood.WARMTH -> 125
-                ReadingMood.MYSTERY, ReadingMood.MELANCHOLY -> 115
-                else -> 105
+                ReadingMood.CALM, ReadingMood.WARMTH -> -10
+                else -> -20
             }
 
             return when {
@@ -106,23 +81,6 @@ internal class MasteringChain private constructor(
                 hz < 4200f -> presence
                 else -> air
             }
-        }
-
-        /** Small weight only; the MIDI arrangement already contains a dedicated bass part. */
-        private fun bassStrength(mood: ReadingMood): Int = when (mood) {
-            ReadingMood.ACTION -> 110
-            ReadingMood.TENSION -> 95
-            ReadingMood.MYSTERY -> 75
-            ReadingMood.MELANCHOLY -> 65
-            else -> 55
-        }
-
-        /** Final lift kept below roughly 1 dB so transients and narration headroom survive. */
-        private fun loudnessGainMb(mood: ReadingMood): Int = when (mood) {
-            ReadingMood.ACTION -> 105
-            ReadingMood.TENSION -> 95
-            ReadingMood.MYSTERY -> 85
-            else -> 75
         }
     }
 }

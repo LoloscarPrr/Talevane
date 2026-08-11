@@ -13,8 +13,8 @@ import kotlin.math.pow
  * Stable offline adaptive-score playback for Talevane.
  *
  * The score is generated locally from book identity + mood and played by Android's MIDI engine.
- * v0.6.9.1 uses a cleaner post-mix mastering chain so piano, bass, solo string and drums retain
- * definition instead of being over-compressed or overly heavy in the low mids.
+ * v0.6.9.2 uses conservative gain staging so the multi-layer score keeps real headroom instead of
+ * relying on post-mix loudness processing.
  */
 class AmbientSoundEngine(context: Context) {
     companion object {
@@ -191,14 +191,14 @@ class AmbientSoundEngine(context: Context) {
     }.getOrNull()
 
     /**
-     * Clean master curve: enough presence to sit under narration, but with explicit headroom for
-     * the EQ/loudness stage and for transient hits from drums or the solo string.
+     * Headroom-first playback curve. Even at a 100% UI setting the music bus stays well below
+     * full-scale so dense MIDI passages, crossfades and device-specific synth peaks have room.
      */
     private fun currentGain(): Float {
         if (!shouldPlay || targetVolume <= 0.001f) return 0f
-        val perceptual = targetVolume.toDouble().pow(0.64).toFloat()
-        val intensityTrim = 0.82f + targetIntensity.coerceIn(0f, 1f) * 0.08f
-        return (perceptual * intensityTrim * 1.05f).coerceIn(0f, 0.86f)
+        val perceptual = targetVolume.toDouble().pow(0.82).toFloat()
+        val intensityTrim = 0.72f + targetIntensity.coerceIn(0f, 1f) * 0.08f
+        return (perceptual * intensityTrim * 0.82f).coerceIn(0f, 0.66f)
     }
 
     private fun applyCurrentGain() {
