@@ -55,6 +55,15 @@ object NarrationClient {
         )
     }
 
+    fun setSpellingCorrection(context: Context, enabled: Boolean) {
+        SpeechCorrectionPreference.set(context, enabled)
+        context.startService(
+            Intent(context, NarrationService::class.java)
+                .setAction(NarrationService.ACTION_SET_SPELLING_CORRECTION)
+                .putExtra(NarrationService.EXTRA_CORRECT_OBVIOUS_TYPOS, enabled)
+        )
+    }
+
     fun query(context: Context) {
         context.startService(Intent(context, NarrationService::class.java).setAction(NarrationService.ACTION_QUERY))
     }

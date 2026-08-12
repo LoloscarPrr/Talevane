@@ -52,6 +52,7 @@ import app.talevane.reader.reading.ReadingPositionResolver
 import app.talevane.reader.speech.AuthorVoiceProfile
 import app.talevane.reader.speech.NarrationClient
 import app.talevane.reader.speech.NarrationService
+import app.talevane.reader.speech.SpeechCorrectionPreference
 import app.talevane.reader.speech.VoiceMode
 import app.talevane.reader.speech.VoicePreferenceStore
 import kotlinx.coroutines.Dispatchers
@@ -77,6 +78,7 @@ private data class NarrationUiState(
     val error: String? = null,
     val ambientVolume: Float = 0.45f,
     val ambientActive: Boolean = false,
+    val spellingCorrectionEnabled: Boolean = true,
     val mood: ReadingMood? = null,
     val moodIntensity: Float = 0.15f,
     val voiceLabel: String = "Auto · sistema"
@@ -458,6 +460,9 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
     var followedChunkIndex by remember(current.id) { mutableIntStateOf(-1) }
     var speechRate by rememberSaveable(current.id) { mutableFloatStateOf(1.0f) }
     var ambientVolume by rememberSaveable(current.id) { mutableFloatStateOf(0.45f) }
+    var spellingCorrectionEnabled by rememberSaveable(current.id) {
+        mutableStateOf(SpeechCorrectionPreference.get(context))
+    }
     var voiceMode by remember(current.id) { mutableStateOf(VoicePreferenceStore.get(context, current.id)) }
 
     DisposableEffect(current.id) {
@@ -479,12 +484,14 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                     error = intent.getStringExtra(NarrationService.EXTRA_ERROR),
                     ambientVolume = intent.getFloatExtra(NarrationService.EXTRA_AMBIENT_VOLUME, 0.45f),
                     ambientActive = intent.getBooleanExtra(NarrationService.EXTRA_AMBIENT_ACTIVE, false),
+                    spellingCorrectionEnabled = intent.getBooleanExtra(NarrationService.EXTRA_CORRECT_OBVIOUS_TYPOS, true),
                     mood = mood,
                     moodIntensity = intent.getFloatExtra(NarrationService.EXTRA_MOOD_INTENSITY, 0.15f),
                     voiceLabel = intent.getStringExtra(NarrationService.EXTRA_VOICE_LABEL) ?: "Auto · sistema"
                 )
                 narrationState = state
                 ambientVolume = state.ambientVolume
+                spellingCorrectionEnabled = state.spellingCorrectionEnabled
                 if (stateBookId == current.id) {
                     manualPosition = state.position.coerceIn(0, current.content.length)
                     speechRate = state.rate
@@ -783,6 +790,29 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                             modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
                         )
                         Text("${(ambientVolume * 100).roundToInt()}%", style = MaterialTheme.typography.labelMedium)
+                    }
+
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Spellcheck, "Corrección de narración", modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Corregir errores evidentes al narrar", style = MaterialTheme.typography.labelMedium)
+                            Text(
+                                "No modifica el libro y evita corregir nombres propios",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = spellingCorrectionEnabled,
+                            onCheckedChange = { enabled ->
+                                spellingCorrectionEnabled = enabled
+                                NarrationClient.setSpellingCorrection(context, enabled)
+                            }
+                        )
                     }
 
                     HorizontalDivider()
