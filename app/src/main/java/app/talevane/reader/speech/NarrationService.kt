@@ -38,7 +38,15 @@ import java.util.concurrent.ConcurrentHashMap
 
 class NarrationService : Service(), TextToSpeech.OnInitListener {
 
-    private data class SpeechChunk(val start: Int, val end: Int, val text: String)
+    private data class SpeechChunk(
+        val start: Int,
+        val end: Int,
+        val text: String,
+        val sourceBoundaries: IntArray
+    ) {
+        fun sourceOffset(ttsBoundary: Int): Int =
+            sourceBoundaries[ttsBoundary.coerceIn(0, sourceBoundaries.lastIndex)]
+    }
 
     companion object {
         const val ACTION_START = "app.talevane.reader.action.NARRATION_START"
@@ -48,6 +56,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_SET_RATE = "app.talevane.reader.action.NARRATION_RATE"
         const val ACTION_SET_AMBIENT_VOLUME = "app.talevane.reader.action.AMBIENT_VOLUME"
         const val ACTION_SET_VOICE_MODE = "app.talevane.reader.action.VOICE_MODE"
+        const val ACTION_SET_SPELLING_CORRECTION = "app.talevane.reader.action.SPELLING_CORRECTION"
         const val ACTION_QUERY = "app.talevane.reader.action.NARRATION_QUERY"
         const val ACTION_STATE = "app.talevane.reader.action.NARRATION_STATE"
 
@@ -67,6 +76,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         const val EXTRA_MOOD_INTENSITY = "mood_intensity"
         const val EXTRA_VOICE_MODE = "voice_mode"
         const val EXTRA_VOICE_LABEL = "voice_label"
+        const val EXTRA_CORRECT_OBVIOUS_TYPOS = "correct_obvious_typos"
 
         private const val CHANNEL_ID = "talevane_narration"
         private const val NOTIFICATION_ID = 4104
@@ -91,11 +101,13 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
     private var currentTitle = "Talevane"
     private var currentAuthor = ""
     private var currentContent = ""
+    private var protectedSpeechTerms: Set<String> = emptySet()
     private var currentPosition = 0
     private var highlightStart = -1
     private var highlightEnd = -1
     private var speechRate = 1.0f
     private var ambientVolume = 0.45f
+    private var spellingCorrectionEnabled = true
     private var currentVoiceMode = VoiceMode.AUTO
     private var voiceProfileLabel = "Auto · sistema"
     private var moodSnapshot = MoodSnapshot(ReadingMood.NEUTRAL, 0.15f, 0.25f)
@@ -109,6 +121,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         ambientVolume = getSharedPreferences(PREFS_AUDIO, MODE_PRIVATE)
             .getFloat(PREF_AMBIENT_VOLUME, 0.45f)
             .coerceIn(0f, 1f)
+        spellingCorrectionEnabled = SpeechCorrectionPreference.get(this)
         ambientSound = AmbientSoundEngine(applicationContext).apply { setVolume(ambientVolume) }
 
         createNotificationChannel()
@@ -178,6 +191,17 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                 } else if (currentBookId < 0 && !isSpeaking) {
                     stopSelf(startId)
                 }
+            }
+            ACTION_SET_SPELLING_CORRECTION -> {
+                spellingCorrectionEnabled = intent.getBooleanExtra(
+                    EXTRA_CORRECT_OBVIOUS_TYPOS,
+                    spellingCorrectionEnabled
+                )
+                SpeechCorrectionPreference.set(this, spellingCorrectionEnabled)
+                if (isSpeaking) speakCurrent()
+                publishState()
+                refreshNotification()
+                if (currentBookId < 0 && !isSpeaking) stopSelf(startId)
             }
             ACTION_QUERY -> {
                 publishState()
@@ -270,8 +294,10 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
 
             override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
                 val chunk = utteranceId?.let(chunkPositions::get) ?: return
-                val absoluteStart = (chunk.start + start).coerceIn(chunk.start, chunk.end)
-                val absoluteEnd = (chunk.start + end).coerceIn(absoluteStart, chunk.end)
+                val sourceStart = chunk.sourceOffset(start)
+                val sourceEnd = chunk.sourceOffset(end)
+                val absoluteStart = (chunk.start + sourceStart).coerceIn(chunk.start, chunk.end)
+                val absoluteEnd = (chunk.start + sourceEnd).coerceIn(absoluteStart, chunk.end)
                 currentPosition = absoluteStart
                 highlightStart = absoluteStart
                 highlightEnd = absoluteEnd
@@ -298,6 +324,9 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         }
         serviceScope.launch {
             val book = dao.get(bookId)
+            val protectedTerms = book?.let { loaded ->
+                SpeechTextNormalizer.buildProtectedTerms(loaded.content, loaded.title, loaded.author)
+            }.orEmpty()
             mainHandler.post {
                 if (book == null) {
                     lastError = "No se encontró el libro para narrar."
@@ -307,7 +336,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                     refreshNotification()
                     return@post
                 }
-                applyBook(book, requestedPosition)
+                applyBook(book, requestedPosition, protectedTerms)
                 pendingStart = true
                 lastError = null
                 updateMetadata()
@@ -318,11 +347,12 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun applyBook(book: BookEntity, requestedPosition: Int) {
+    private fun applyBook(book: BookEntity, requestedPosition: Int, protectedTerms: Set<String>) {
         currentBookId = book.id
         currentTitle = book.title
         currentAuthor = book.author
         currentContent = book.content
+        protectedSpeechTerms = protectedTerms
         ambientSound.setBookIdentity(book.id, book.title, book.author)
         currentPosition = requestedPosition.coerceIn(0, currentContent.length)
         highlightStart = -1
@@ -449,8 +479,14 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                 if (split >= cursor + minimumUsefulSplit) end = split + 1
             }
             if (end <= cursor) end = (cursor + maxChunk).coerceAtMost(text.length)
-            val chunkText = prepareSpeechText(text.substring(cursor, end))
-            if (chunkText.isNotBlank()) result += SpeechChunk(cursor, end, chunkText)
+            val normalized = SpeechTextNormalizer.normalize(
+                raw = text.substring(cursor, end),
+                protectedTerms = protectedSpeechTerms,
+                correctObviousTypos = spellingCorrectionEnabled
+            )
+            if (normalized.text.isNotBlank()) {
+                result += SpeechChunk(cursor, end, normalized.text, normalized.sourceBoundaries)
+            }
             cursor = end
         }
         return result
@@ -640,6 +676,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                 .putExtra(EXTRA_MOOD_INTENSITY, moodSnapshot.intensity)
                 .putExtra(EXTRA_VOICE_MODE, currentVoiceMode.name)
                 .putExtra(EXTRA_VOICE_LABEL, voiceProfileLabel)
+                .putExtra(EXTRA_CORRECT_OBVIOUS_TYPOS, spellingCorrectionEnabled)
         )
     }
 
