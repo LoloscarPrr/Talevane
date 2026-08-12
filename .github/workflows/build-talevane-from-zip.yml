@@ -3,12 +3,9 @@ name: Build Talevane APK
 on:
   workflow_dispatch:
   push:
-    branches: ["main", "fix/v0.6.9.6-slash-tts"]
+    branches: ["main"]
   pull_request:
     branches: ["main"]
-
-permissions:
-  contents: write
 
 jobs:
   build:
@@ -17,23 +14,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Apply slash TTS patch
-        if: ${{ github.ref == 'refs/heads/fix/v0.6.9.6-slash-tts' }}
-        run: python .github/scripts/apply_slash_tts_fix.py
-
-      - name: Commit slash TTS patch
-        if: ${{ github.ref == 'refs/heads/fix/v0.6.9.6-slash-tts' }}
-        run: |
-          git show origin/main:.github/workflows/build-talevane-from-zip.yml > .github/workflows/build-talevane-from-zip.yml
-          rm .github/scripts/apply_slash_tts_fix.py
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Talevane v0.6.9.6 — read slash-separated words naturally"
-          git push origin HEAD:fix/v0.6.9.6-slash-tts
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4

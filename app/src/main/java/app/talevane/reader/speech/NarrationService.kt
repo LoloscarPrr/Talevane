@@ -463,12 +463,23 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
      * Keeping one output char per source char preserves TextToSpeech range -> canonical mapping.
      */
     private fun prepareSpeechText(raw: String): String {
-        if (raw.none { it == '\n' || it == '\r' || it == '\t' }) return raw
+        if (raw.none { it == '\n' || it == '\r' || it == '\t' || it == '/' }) return raw
 
         val chars = raw.toCharArray()
         var i = 0
         while (i < raw.length) {
             when (raw[i]) {
+                '/' -> {
+                    val previous = raw.getOrNull(i - 1)
+                    val next = raw.getOrNull(i + 1)
+                    if (previous?.isLetter() == true && next?.isLetter() == true) {
+                        // Some Android TTS engines spell slash-joined words letter by letter.
+                        // Replace only letter/letter slashes in the speech-only copy. The comma
+                        // preserves the exact character count used by karaoke highlighting.
+                        chars[i] = ','
+                    }
+                    i += 1
+                }
                 '\t' -> {
                     chars[i] = ' '
                     i += 1
