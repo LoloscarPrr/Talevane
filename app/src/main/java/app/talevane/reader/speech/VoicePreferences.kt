@@ -100,7 +100,6 @@ object AuthorVoiceProfile {
         bookId: Long
     ): VoiceProfileResult {
         val effective = if (requested == VoiceMode.AUTO) infer(author) else requested
-        if (defaultVoice != null) engine.voice = defaultVoice
         engine.setPitch(1.0f)
 
         if (effective == VoiceMode.MASCULINE || effective == VoiceMode.FEMININE) {
@@ -112,29 +111,40 @@ object AuthorVoiceProfile {
                 return VoiceProfileResult(requested, effective, label, engine.voice?.name ?: savedVoice.name)
             }
 
+            // Automatic gender selection is conservative: Talevane only auto-picks a voice when
+            // Android exposes an explicit matching gender marker. Unknown voices must be auditioned
+            // and chosen by the user instead of being faked with pitch changes.
             val recommended = selectRecommendedVoice(engine, effective)
             if (recommended != null && applyConcreteVoice(engine, recommended)) {
                 val base = if (effective == VoiceMode.MASCULINE) "masculina" else "femenina"
-                val identified = detectedGender(recommended) == effective
-                val suffix = if (identified) "recomendada" else "recomendada · sexo no verificado"
-                val label = if (requested == VoiceMode.AUTO) "Auto · $base $suffix" else "${base.replaceFirstChar { it.uppercase() }} · $suffix"
+                val label = if (requested == VoiceMode.AUTO) "Auto · $base verificada" else "${base.replaceFirstChar { it.uppercase() }} · verificada"
                 return VoiceProfileResult(requested, effective, label, engine.voice?.name ?: recommended.name)
             }
 
-            // Do not pretend pitch changes prove speaker sex. This remains only a last-resort hint.
-            engine.setPitch(if (effective == VoiceMode.MASCULINE) 0.96f else 1.04f)
+            restoreDefaultVoice(engine, defaultVoice)
             val base = if (effective == VoiceMode.MASCULINE) "masculina" else "femenina"
-            val label = if (requested == VoiceMode.AUTO) "Auto · $base aproximada" else "${base.replaceFirstChar { it.uppercase() }} · aproximada"
-            return VoiceProfileResult(requested, effective, label, defaultVoice?.name)
+            val label = if (requested == VoiceMode.AUTO) "Auto · elige voz $base" else "${base.replaceFirstChar { it.uppercase() }} · elige una voz"
+            return VoiceProfileResult(requested, effective, label, engine.voice?.name ?: defaultVoice?.name)
         }
 
+        restoreDefaultVoice(engine, defaultVoice)
         val label = if (requested == VoiceMode.AUTO) "Auto · sistema" else "Sistema"
-        return VoiceProfileResult(requested, effective, label, defaultVoice?.name)
+        return VoiceProfileResult(requested, effective, label, engine.voice?.name ?: defaultVoice?.name)
+    }
+
+    private fun restoreDefaultVoice(engine: TextToSpeech, defaultVoice: Voice?) {
+        if (defaultVoice == null || engine.voice?.name == defaultVoice.name) return
+        runCatching { engine.voice = defaultVoice }
     }
 
     private fun applyConcreteVoice(engine: TextToSpeech, voice: Voice): Boolean {
-        val languageResult = engine.setLanguage(voice.locale)
-        if (languageResult == TextToSpeech.LANG_MISSING_DATA || languageResult == TextToSpeech.LANG_NOT_SUPPORTED) return false
+        // Avoid reloading the exact same TTS model every time play/resume is pressed.
+        if (engine.voice?.name == voice.name) return true
+
+        if (engine.voice?.locale != voice.locale) {
+            val languageResult = engine.setLanguage(voice.locale)
+            if (languageResult == TextToSpeech.LANG_MISSING_DATA || languageResult == TextToSpeech.LANG_NOT_SUPPORTED) return false
+        }
         return engine.setVoice(voice) == TextToSpeech.SUCCESS
     }
 
@@ -143,6 +153,7 @@ object AuthorVoiceProfile {
         return engine.voices
             ?.asSequence()
             ?.filter { currentLanguage == null || it.locale.language == currentLanguage }
+            ?.filter { detectedGender(it) == target }
             ?.map { it to VoiceQualityHeuristics.assess(it, target) }
             ?.filter { (_, assessment) -> assessment.recommended }
             ?.sortedByDescending { (_, assessment) -> assessment.score }
