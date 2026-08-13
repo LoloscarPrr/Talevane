@@ -34,7 +34,7 @@ internal fun BookFlowPage(
     onTapPosition: (Int) -> Unit
 ) {
     var layout by remember(chunk.start, chunk.end, fontSizeSp) { mutableStateOf<TextLayoutResult?>(null) }
-    val scroll = rememberScrollState(chunk.start)
+    val scroll = rememberScrollState()
     val rendered = buildAnnotatedString {
         append(chunk.text)
 
