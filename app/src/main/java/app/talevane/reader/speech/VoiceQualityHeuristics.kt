@@ -1,5 +1,6 @@
 package app.talevane.reader.speech
 
+import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
 
 data class VoiceAssessment(
@@ -20,6 +21,7 @@ object VoiceQualityHeuristics {
             append(voice.name.lowercase())
             voice.features.orEmpty().forEach { append(' ').append(it.lowercase()) }
         }
+        val needsDownload = voice.features.orEmpty().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)
 
         when {
             voice.quality >= Voice.QUALITY_VERY_HIGH -> {
@@ -32,49 +34,62 @@ object VoiceQualityHeuristics {
             }
             voice.quality >= Voice.QUALITY_NORMAL -> score += 10
             else -> {
-                score -= 22
+                score -= 24
                 notes += "calidad baja"
             }
         }
 
         when {
-            voice.latency <= Voice.LATENCY_LOW -> score += 8
-            voice.latency >= Voice.LATENCY_HIGH -> score -= 4
+            voice.latency <= Voice.LATENCY_LOW -> {
+                score += 14
+                notes += "respuesta rápida"
+            }
+            voice.latency >= Voice.LATENCY_HIGH -> {
+                score -= 12
+                notes += "respuesta lenta"
+            }
         }
 
         if (voice.locale.language.equals("es", ignoreCase = true)) score += 18
 
-        if (detected == desiredMode) {
-            score += 34
-            notes += if (desiredMode == VoiceMode.MASCULINE) "masculina identificada" else "femenina identificada"
-        } else if (detected != null && detected != desiredMode) {
-            score -= 80
-            notes += "sexo incompatible"
-        } else {
-            notes += "sexo no verificado"
+        when {
+            detected == desiredMode -> {
+                score += 46
+                notes += if (desiredMode == VoiceMode.MASCULINE) "masculina identificada" else "femenina identificada"
+            }
+            detected != null && detected != desiredMode -> {
+                score -= 120
+                notes += "sexo incompatible"
+            }
+            else -> notes += "sexo no verificado"
         }
 
         if (narratorHints.any(searchable::contains)) {
-            score += 36
+            score += 24
             notes += "perfil natural/neural"
         }
         if (weakHints.any(searchable::contains)) {
-            score -= 20
+            score -= 28
             notes += "voz compacta/auxiliar"
         }
 
-        // Network voices are allowed because some system engines expose their most natural voices
-        // that way. They are not automatically preferred, but neither are they buried below every
-        // offline voice as in v0.6.2.
+        // Prefer installed/offline voices for a quicker first word. Network voices remain usable,
+        // but are no longer pushed to the top simply for being online.
         if (voice.isNetworkConnectionRequired) {
-            score += if (voice.quality >= Voice.QUALITY_HIGH) 22 else 7
-            notes += if (voice.quality >= Voice.QUALITY_HIGH) "voz online de alta calidad" else "requiere internet"
+            score -= 12
+            notes += "online"
         } else {
+            score += 12
             notes += "offline"
         }
 
-        val recommended = score >= 42 && !(detected != null && detected != desiredMode)
-        val summary = notes.distinct().joinToString(" · ")
-        return VoiceAssessment(score, recommended, summary)
+        if (needsDownload) {
+            score -= 100
+            notes += "requiere descarga"
+        }
+
+        val incompatible = detected != null && detected != desiredMode
+        val recommended = score >= 48 && !incompatible && !needsDownload
+        return VoiceAssessment(score, recommended, notes.distinct().joinToString(" · "))
     }
 }
