@@ -39,10 +39,12 @@ import java.util.concurrent.ConcurrentHashMap
 class NarrationService : Service(), TextToSpeech.OnInitListener {
 
     private data class SpeechChunk(
+        val requestedStart: Int,
         val start: Int,
         val end: Int,
         val text: String,
-        val sourceBoundaries: IntArray
+        val sourceBoundaries: IntArray,
+        val generation: Long
     ) {
         fun sourceOffset(ttsBoundary: Int): Int =
             sourceBoundaries[ttsBoundary.coerceIn(0, sourceBoundaries.lastIndex)]
@@ -88,6 +90,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val dao by lazy { TalevaneDatabase.get(this).bookDao() }
     private val chunkPositions = ConcurrentHashMap<String, SpeechChunk>()
+    private val queuedOrPreparingStarts = mutableSetOf<Int>()
 
     private var tts: TextToSpeech? = null
     private var defaultVoice: Voice? = null
@@ -112,9 +115,9 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
     private var voiceProfileLabel = "Auto · sistema"
     private var moodSnapshot = MoodSnapshot(ReadingMood.NEUTRAL, 0.15f, 0.25f)
     private var lastMoodBucket = Int.MIN_VALUE
-    private var lastUtteranceId: String? = null
     private var lastReportedPosition = 0
     private var lastError: String? = null
+    private var speechGeneration = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -237,12 +240,24 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         applyVoiceProfile()
         engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
+                val chunk = utteranceId?.let(chunkPositions::get) ?: return
+                if (chunk.generation != speechGeneration) return
                 mainHandler.post {
+                    if (chunk.generation != speechGeneration || !pendingStart) return@post
+                    queuedOrPreparingStarts.remove(chunk.requestedStart)
                     isSpeaking = true
                     lastError = null
                     updateAmbientMood(force = true)
                     if (ambientVolume > 0f) {
                         ambientSound.start(moodSnapshot.mood, moodSnapshot.intensity, ambientVolume)
+                    }
+                    if (chunk.end < currentContent.length) {
+                        queueNextChunk(
+                            startPosition = chunk.end,
+                            generation = chunk.generation,
+                            fastStart = false,
+                            queueMode = TextToSpeech.QUEUE_ADD
+                        )
                     }
                     updatePlaybackState()
                     publishState()
@@ -251,17 +266,51 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
             }
 
             override fun onDone(utteranceId: String?) {
-                val chunk = utteranceId?.let(chunkPositions::remove)
-                if (chunk != null) {
+                val chunk = utteranceId?.let(chunkPositions::remove) ?: return
+                if (chunk.generation != speechGeneration) return
+                mainHandler.post {
+                    if (chunk.generation != speechGeneration) return@post
                     currentPosition = chunk.end.coerceAtMost(currentContent.length)
                     lastReportedPosition = currentPosition
+                    highlightStart = -1
+                    highlightEnd = -1
                     updateAmbientMood()
                     persistPosition()
+
+                    if (!pendingStart) return@post
+                    if (currentPosition >= currentContent.length) {
+                        finishNarration()
+                    } else {
+                        // Usually the next fragment was already prepared while this one was speaking.
+                        // If the TTS engine was faster than preparation, this call is the fallback.
+                        queueNextChunk(
+                            startPosition = currentPosition,
+                            generation = chunk.generation,
+                            fastStart = false,
+                            queueMode = TextToSpeech.QUEUE_ADD
+                        )
+                    }
                 }
-                if (utteranceId != null && utteranceId == lastUtteranceId) {
-                    mainHandler.post {
+            }
+
+            override fun onError(utteranceId: String?) {
+                val chunk = utteranceId?.let(chunkPositions::remove)
+                val generation = chunk?.generation ?: utteranceGeneration(utteranceId)
+                if (generation != null && generation != speechGeneration) return
+                mainHandler.post {
+                    if (generation != null && generation != speechGeneration) return@post
+                    chunk?.let { queuedOrPreparingStarts.remove(it.requestedStart) }
+                    failNarration("La narración se detuvo por un error del motor de voz.")
+                }
+            }
+
+            override fun onStop(utteranceId: String?, interrupted: Boolean) {
+                val generation = utteranceGeneration(utteranceId)
+                if (generation != null && generation != speechGeneration) return
+                mainHandler.post {
+                    if (generation != null && generation != speechGeneration) return@post
+                    if (!pendingStart) {
                         isSpeaking = false
-                        pendingStart = false
                         ambientSound.pause()
                         updatePlaybackState()
                         publishState()
@@ -270,30 +319,9 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                 }
             }
 
-            override fun onError(utteranceId: String?) {
-                mainHandler.post {
-                    isSpeaking = false
-                    pendingStart = false
-                    ambientSound.pause()
-                    lastError = "La narración se detuvo por un error del motor de voz."
-                    updatePlaybackState()
-                    publishState()
-                    refreshNotification()
-                }
-            }
-
-            override fun onStop(utteranceId: String?, interrupted: Boolean) {
-                mainHandler.post {
-                    isSpeaking = false
-                    ambientSound.pause()
-                    updatePlaybackState()
-                    publishState()
-                    refreshNotification()
-                }
-            }
-
             override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
                 val chunk = utteranceId?.let(chunkPositions::get) ?: return
+                if (chunk.generation != speechGeneration) return
                 val sourceStart = chunk.sourceOffset(start)
                 val sourceEnd = chunk.sourceOffset(end)
                 val absoluteStart = (chunk.start + sourceStart).coerceIn(chunk.start, chunk.end)
@@ -308,7 +336,9 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                     updateAmbientMood()
                     persistPosition()
                 }
-                mainHandler.post { publishState() }
+                mainHandler.post {
+                    if (chunk.generation == speechGeneration) publishState()
+                }
             }
         })
         ttsReady = true
@@ -322,10 +352,27 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
             publishState()
             return
         }
+
+        // Replaying or resuming the same book must not hit Room or rescan the whole source.
+        if (bookId == currentBookId && currentContent.isNotBlank()) {
+            currentPosition = requestedPosition.coerceIn(0, currentContent.length)
+            highlightStart = -1
+            highlightEnd = -1
+            currentVoiceMode = VoicePreferenceStore.get(this, bookId)
+            lastReportedPosition = currentPosition
+            pendingStart = true
+            lastError = null
+            updateMetadata()
+            publishState()
+            refreshNotification()
+            if (ttsReady) speakCurrent()
+            return
+        }
+
         serviceScope.launch {
             val book = dao.get(bookId)
             val protectedTerms = book?.let { loaded ->
-                SpeechTextNormalizer.buildProtectedTerms(loaded.content, loaded.title, loaded.author)
+                SpeechTextNormalizer.buildMetadataProtectedTerms(loaded.title, loaded.author)
             }.orEmpty()
             mainHandler.post {
                 if (book == null) {
@@ -358,10 +405,9 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         highlightStart = -1
         highlightEnd = -1
         currentVoiceMode = VoicePreferenceStore.get(this, book.id)
-        applyVoiceProfile()
         lastReportedPosition = currentPosition
         lastMoodBucket = Int.MIN_VALUE
-        moodSnapshot = MoodEngine.analyze(currentContent, currentPosition)
+        moodSnapshot = MoodSnapshot(ReadingMood.NEUTRAL, 0.15f, 0.25f)
         ambientSound.setMood(moodSnapshot.mood, moodSnapshot.intensity)
     }
 
@@ -375,35 +421,163 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         val engine = tts ?: return
         if (!ttsReady || currentContent.isBlank()) return
 
+        speechGeneration += 1
+        val generation = speechGeneration
         engine.stop()
         ambientSound.pause()
         chunkPositions.clear()
-        lastUtteranceId = null
+        queuedOrPreparingStarts.clear()
         engine.setSpeechRate(speechRate)
         applyVoiceProfile()
-        updateAmbientMood(force = true)
+        pendingStart = true
 
-        val chunks = buildChunks(currentContent, currentPosition)
-        if (chunks.isEmpty()) {
-            isSpeaking = false
-            pendingStart = false
-            ambientSound.pause()
-            publishState()
-            refreshNotification()
+        // Only the first small fragment is prepared before speech begins. Everything after it
+        // is produced progressively while the listener is already hearing the book.
+        queueNextChunk(
+            startPosition = currentPosition,
+            generation = generation,
+            fastStart = true,
+            queueMode = TextToSpeech.QUEUE_FLUSH
+        )
+    }
+
+    private fun queueNextChunk(
+        startPosition: Int,
+        generation: Long,
+        fastStart: Boolean,
+        queueMode: Int
+    ) {
+        if (!pendingStart || generation != speechGeneration || currentContent.isBlank()) return
+        val safeStart = startPosition.coerceIn(0, currentContent.length)
+        if (safeStart >= currentContent.length) {
+            finishNarration()
             return
         }
+        if (!queuedOrPreparingStarts.add(safeStart)) return
 
-        chunks.forEachIndexed { index, chunk ->
-            val utteranceId = "talevane-${UUID.randomUUID()}-$index"
-            chunkPositions[utteranceId] = chunk
-            if (index == chunks.lastIndex) lastUtteranceId = utteranceId
-            engine.speak(
-                chunk.text,
-                if (index == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD,
-                null,
-                utteranceId
+        val textSnapshot = currentContent
+        val protectedSnapshot = protectedSpeechTerms
+        val correctionSnapshot = spellingCorrectionEnabled
+        val bookIdSnapshot = currentBookId
+
+        serviceScope.launch {
+            val chunk = buildNextChunk(
+                text = textSnapshot,
+                startPosition = safeStart,
+                generation = generation,
+                fastStart = fastStart,
+                protectedTerms = protectedSnapshot,
+                correctObviousTypos = correctionSnapshot
             )
+            mainHandler.post {
+                if (
+                    generation != speechGeneration ||
+                    !pendingStart ||
+                    currentBookId != bookIdSnapshot ||
+                    currentContent !== textSnapshot
+                ) {
+                    queuedOrPreparingStarts.remove(safeStart)
+                    return@post
+                }
+
+                if (chunk == null) {
+                    queuedOrPreparingStarts.remove(safeStart)
+                    finishNarration()
+                    return@post
+                }
+
+                val activeEngine = tts
+                if (activeEngine == null) {
+                    queuedOrPreparingStarts.remove(safeStart)
+                    failNarration("No se pudo iniciar la voz del dispositivo.")
+                    return@post
+                }
+
+                val utteranceId = "talevane-$generation-${UUID.randomUUID()}"
+                chunkPositions[utteranceId] = chunk
+                val result = activeEngine.speak(chunk.text, queueMode, null, utteranceId)
+                if (result != TextToSpeech.SUCCESS) {
+                    chunkPositions.remove(utteranceId)
+                    queuedOrPreparingStarts.remove(safeStart)
+                    failNarration("El motor de voz no pudo preparar este fragmento.")
+                }
+            }
         }
+    }
+
+    private fun buildNextChunk(
+        text: String,
+        startPosition: Int,
+        generation: Long,
+        fastStart: Boolean,
+        protectedTerms: Set<String>,
+        correctObviousTypos: Boolean
+    ): SpeechChunk? {
+        val requestedStart = startPosition.coerceIn(0, text.length)
+        var cursor = requestedStart
+        val maxChunk = if (fastStart) 550 else 1800
+        val minimumUsefulSplit = if (fastStart) 160 else 600
+
+        while (cursor < text.length) {
+            var end = (cursor + maxChunk).coerceAtMost(text.length)
+            if (end < text.length) {
+                // Split on real punctuation only. PDF line wrapping must never create a speech break.
+                val split = text.lastIndexOfAny(charArrayOf('.', '!', '?', ';', ':'), end - 1)
+                if (split >= cursor + minimumUsefulSplit) end = split + 1
+            }
+            if (end <= cursor) end = (cursor + maxChunk).coerceAtMost(text.length)
+
+            val normalized = SpeechTextNormalizer.normalize(
+                raw = text.substring(cursor, end),
+                protectedTerms = protectedTerms,
+                correctObviousTypos = correctObviousTypos
+            )
+            if (normalized.text.isNotBlank()) {
+                return SpeechChunk(
+                    requestedStart = requestedStart,
+                    start = cursor,
+                    end = end,
+                    text = normalized.text,
+                    sourceBoundaries = normalized.sourceBoundaries,
+                    generation = generation
+                )
+            }
+            cursor = end
+        }
+        return null
+    }
+
+    private fun utteranceGeneration(utteranceId: String?): Long? {
+        if (utteranceId == null || !utteranceId.startsWith("talevane-")) return null
+        return utteranceId.removePrefix("talevane-").substringBefore('-').toLongOrNull()
+    }
+
+    private fun finishNarration() {
+        pendingStart = false
+        isSpeaking = false
+        highlightStart = -1
+        highlightEnd = -1
+        queuedOrPreparingStarts.clear()
+        ambientSound.pause()
+        updatePlaybackState()
+        publishState()
+        refreshNotification()
+    }
+
+    private fun failNarration(message: String) {
+        speechGeneration += 1
+        pendingStart = false
+        isSpeaking = false
+        tts?.stop()
+        chunkPositions.clear()
+        queuedOrPreparingStarts.clear()
+        highlightStart = -1
+        highlightEnd = -1
+        ambientSound.pause()
+        lastError = message
+        updatePlaybackState()
+        publishState()
+        refreshNotification()
     }
 
     private fun updateAmbientMood(force: Boolean = false) {
@@ -419,8 +593,11 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun pauseNarration() {
+        speechGeneration += 1
         pendingStart = false
         tts?.stop()
+        chunkPositions.clear()
+        queuedOrPreparingStarts.clear()
         isSpeaking = false
         highlightStart = -1
         highlightEnd = -1
@@ -434,15 +611,17 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
     private fun resumeNarration() {
         if (currentBookId < 0 || currentContent.isBlank()) return
         pendingStart = true
-        updateAmbientMood(force = true)
         if (ttsReady) speakCurrent()
         publishState()
         refreshNotification()
     }
 
     private fun stopNarration(removeNotification: Boolean) {
+        speechGeneration += 1
         pendingStart = false
         tts?.stop()
+        chunkPositions.clear()
+        queuedOrPreparingStarts.clear()
         isSpeaking = false
         highlightStart = -1
         highlightEnd = -1
@@ -463,33 +642,6 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         val position = currentPosition
         if (id < 0) return
         serviceScope.launch { dao.updateProgress(id, position) }
-    }
-
-    private fun buildChunks(text: String, startPosition: Int): List<SpeechChunk> {
-        val maxChunk = 3400
-        val minimumUsefulSplit = 1500
-        val result = mutableListOf<SpeechChunk>()
-        var cursor = startPosition.coerceIn(0, text.length)
-
-        while (cursor < text.length) {
-            var end = (cursor + maxChunk).coerceAtMost(text.length)
-            if (end < text.length) {
-                // Split on real punctuation only. PDF line wrapping must never create a speech break.
-                val split = text.lastIndexOfAny(charArrayOf('.', '!', '?', ';', ':'), end - 1)
-                if (split >= cursor + minimumUsefulSplit) end = split + 1
-            }
-            if (end <= cursor) end = (cursor + maxChunk).coerceAtMost(text.length)
-            val normalized = SpeechTextNormalizer.normalize(
-                raw = text.substring(cursor, end),
-                protectedTerms = protectedSpeechTerms,
-                correctObviousTypos = spellingCorrectionEnabled
-            )
-            if (normalized.text.isNotBlank()) {
-                result += SpeechChunk(cursor, end, normalized.text, normalized.sourceBoundaries)
-            }
-            cursor = end
-        }
-        return result
     }
 
     /**
@@ -681,12 +833,14 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
     }
 
     override fun onDestroy() {
+        speechGeneration += 1
         tts?.stop()
         tts?.shutdown()
         tts = null
         ambientSound.release()
         mediaSession.release()
         chunkPositions.clear()
+        queuedOrPreparingStarts.clear()
         serviceScope.cancel()
         mainHandler.removeCallbacksAndMessages(null)
         super.onDestroy()
