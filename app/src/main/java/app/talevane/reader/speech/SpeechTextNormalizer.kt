@@ -67,17 +67,26 @@ internal object SpeechTextNormalizer {
     )
 
     /**
-     * Protects explicit metadata and capitalized terms that appear away from a normal sentence start.
-     * This captures character/place names without treating every first word of a sentence as a name.
+     * Fast startup protection: title/author metadata is enough before the first word is spoken.
+     * Capitalized words in the live fragment are already rejected by normalize(), so Talevane does
+     * not need to scan an entire novel before narration can begin.
      */
-    fun buildProtectedTerms(content: String, title: String, author: String): Set<String> {
+    fun buildMetadataProtectedTerms(title: String, author: String): Set<String> {
         val protected = HashSet<String>()
-
         sequenceOf(title, author).forEach { metadata ->
             wordRegex.findAll(metadata).forEach { match ->
                 protected += match.value.lowercase(spanish)
             }
         }
+        return protected
+    }
+
+    /**
+     * Full-document protection remains available for offline/background preparation paths.
+     * It is deliberately not required by the interactive play button.
+     */
+    fun buildProtectedTerms(content: String, title: String, author: String): Set<String> {
+        val protected = HashSet(buildMetadataProtectedTerms(title, author))
 
         wordRegex.findAll(content).forEach { match ->
             val token = match.value
