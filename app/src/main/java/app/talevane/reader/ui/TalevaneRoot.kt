@@ -9,6 +9,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -87,7 +89,7 @@ private data class NarrationUiState(
 @Composable
 fun TalevaneRoot(repository: BookRepository) {
     var readerId by rememberSaveable { mutableStateOf<Long?>(null) }
-    MaterialTheme(colorScheme = darkColorScheme()) {
+    BookFlowTheme {
         Surface(Modifier.fillMaxSize()) {
             if (readerId == null) LibraryScreen(repository) { readerId = it }
             else ReaderScreen(repository, readerId!!) { readerId = null }
@@ -194,7 +196,7 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
                     ) {
                         Icon(
                             painter = painterResource(R.drawable.ic_talevane_logo),
-                            contentDescription = "Talevane",
+                            contentDescription = "BookFlow",
                             modifier = Modifier.padding(9.dp),
                             tint = MaterialTheme.colorScheme.onPrimaryContainer
                         )
@@ -202,11 +204,11 @@ private fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) 
                     Spacer(Modifier.width(14.dp))
                     Column {
                         Row(verticalAlignment = Alignment.Bottom) {
-                            Text("Talevane", style = MaterialTheme.typography.headlineLarge)
+                            Text("BookFlow", style = MaterialTheme.typography.headlineLarge)
                             Spacer(Modifier.width(8.dp))
                             Text("v$versionName", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                         }
-                        Text("Tus historias, llevadas a la vida.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Powered by Talevane · lectura que fluye contigo.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
                 Spacer(Modifier.height(14.dp))
@@ -357,7 +359,10 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
     var restored by remember(bookId) { mutableStateOf(false) }
     var showChapters by rememberSaveable { mutableStateOf(false) }
     var showVoiceMenu by rememberSaveable { mutableStateOf(false) }
-    val listState = rememberLazyListState()
+    var showReaderSettings by rememberSaveable { mutableStateOf(false) }
+    var showPagePicker by rememberSaveable { mutableStateOf(false) }
+    var selectedStartPosition by remember(bookId) { mutableStateOf<Int?>(null) }
+    var fontSize by rememberSaveable(bookId) { mutableFloatStateOf(18f) }
     var loadError by remember(bookId) { mutableStateOf<String?>(null) }
 
     LaunchedEffect(bookId) {
@@ -386,6 +391,7 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
     }
     val display = remember(current.title, current.author) { BookPresenter.present(current) }
     var chunks by remember(current.id) { mutableStateOf<List<ReadingChunk>>(emptyList()) }
+    val pagerState = rememberPagerState(initialPage = 0, pageCount = { chunks.size.coerceAtLeast(1) })
     var analyzedStructure by remember(current.id) { mutableStateOf<BookStructure?>(null) }
     var preparationError by remember(current.id) { mutableStateOf<String?>(null) }
 
@@ -525,21 +531,20 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
             } else {
                 ReadingPositionResolver.resumeStart(current.content, rawSavedPosition)
             }
-            val itemIndex = if (savedPosition <= 0) 0 else ReadingChunker.indexForPosition(chunks, savedPosition) + 1
-            listState.scrollToItem(itemIndex)
+            val page = ReadingChunker.indexForPosition(chunks, savedPosition)
+            pagerState.scrollToPage(page)
             manualPosition = savedPosition.coerceIn(0, current.content.length)
             restored = true
         }
     }
 
     LaunchedEffect(current.id, restored, isSpeaking, chunks.size) {
-        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }.collectLatest { (itemIndex, _) ->
-            if (!restored || current.content.isBlank() || isSpeaking) return@collectLatest
-            delay(350)
-            val position = if (itemIndex <= 0) 0 else {
-                chunks.getOrNull(itemIndex - 1)?.start ?: current.content.length
-            }
-            manualPosition = position.coerceIn(0, current.content.length)
+        snapshotFlow { pagerState.currentPage }.collectLatest { page ->
+            if (!restored || current.content.isBlank() || isSpeaking || chunks.isEmpty()) return@collectLatest
+            delay(180)
+            val chunk = chunks.getOrNull(page) ?: return@collectLatest
+            selectedStartPosition = null
+            manualPosition = chunk.start.coerceIn(0, current.content.length)
             repository.saveProgress(current.id, manualPosition)
         }
     }
@@ -547,10 +552,10 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
     LaunchedEffect(narrationState.highlightStart, isSpeaking, restored, chunks.size) {
         if (isSpeaking && restored && chunks.isNotEmpty() && current.content.isNotBlank()) {
             val followPosition = narrationState.highlightStart.takeIf { it >= 0 } ?: narrationState.position
-            val index = ReadingChunker.indexForPosition(chunks, followPosition)
-            if (index != followedChunkIndex) {
-                followedChunkIndex = index
-                listState.animateScrollToItem(index + 1)
+            val page = ReadingChunker.indexForPosition(chunks, followPosition)
+            if (page != followedChunkIndex) {
+                followedChunkIndex = page
+                pagerState.animateScrollToPage(page)
             }
         }
     }
@@ -596,9 +601,10 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
 
     fun positionFromScroll(): Int {
         if (!restored || chunks.isEmpty()) return manualPosition.coerceIn(0, current.content.length)
-        val itemIndex = listState.firstVisibleItemIndex
-        val position = if (itemIndex <= 0) manualPosition else chunks.getOrNull(itemIndex - 1)?.start ?: manualPosition
-        return position.coerceIn(0, current.content.length)
+        val page = chunks.getOrNull(pagerState.currentPage)
+            ?: return manualPosition.coerceIn(0, current.content.length)
+        val remembered = manualPosition
+        return if (remembered in page.start until page.end) remembered else page.start
     }
 
     fun jumpToChapter(chapter: BookChapter) {
@@ -606,8 +612,8 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
         manualPosition = position
         scope.launch {
             if (chunks.isNotEmpty() && current.content.isNotBlank()) {
-                val index = ReadingChunker.indexForPosition(chunks, position)
-                listState.scrollToItem(index + 1)
+                val page = ReadingChunker.indexForPosition(chunks, position)
+                pagerState.scrollToPage(page)
             }
             repository.saveProgress(current.id, position)
         }
@@ -638,16 +644,145 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
         }
     }
 
+    if (showPagePicker && chunks.isNotEmpty()) {
+        BookFlowPagePickerDialog(
+            currentPage = pagerState.currentPage.coerceIn(0, chunks.lastIndex),
+            pageCount = chunks.size,
+            onDismiss = { showPagePicker = false },
+            onGoToPage = { page ->
+                showPagePicker = false
+                selectedStartPosition = null
+                scope.launch {
+                    pagerState.animateScrollToPage(page)
+                    val position = chunks.getOrNull(page)?.start ?: 0
+                    manualPosition = position
+                    repository.saveProgress(current.id, position)
+                }
+            }
+        )
+    }
+
+    if (showReaderSettings) {
+        ModalBottomSheet(
+            onDismissRequest = { showReaderSettings = false },
+            containerColor = BookFlowPanel
+        ) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+            ) {
+                Text("Ajustes de lectura", style = MaterialTheme.typography.headlineSmall, color = BookFlowPageText)
+                Text("Motor Talevane", style = MaterialTheme.typography.labelMedium, color = BookFlowGold)
+                Spacer(Modifier.height(18.dp))
+
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Tamaño del texto", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                    TextButton(onClick = { fontSize = (fontSize - 1f).coerceAtLeast(15f) }) { Text("A−") }
+                    Text("${fontSize.toInt()} sp", style = MaterialTheme.typography.labelLarge)
+                    TextButton(onClick = { fontSize = (fontSize + 1f).coerceAtMost(24f) }) { Text("A+") }
+                }
+
+                HorizontalDivider(color = BookFlowGold.copy(alpha = 0.18f))
+
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Velocidad de voz", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                    IconButton(onClick = {
+                        speechRate = (speechRate - 0.1f).coerceAtLeast(0.6f)
+                        if (activeBook) NarrationClient.setRate(context, speechRate)
+                    }) { Icon(Icons.Default.Remove, "Más lento") }
+                    Text("${"%.1f".format(speechRate)}×", style = MaterialTheme.typography.labelLarge)
+                    IconButton(onClick = {
+                        speechRate = (speechRate + 0.1f).coerceAtMost(1.8f)
+                        if (activeBook) NarrationClient.setRate(context, speechRate)
+                    }) { Icon(Icons.Default.Add, "Más rápido") }
+                }
+
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Voz", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                    Box {
+                        OutlinedButton(onClick = { showVoiceMenu = true }) {
+                            Icon(Icons.Default.RecordVoiceOver, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(voiceLabel, maxLines = 1)
+                        }
+                        DropdownMenu(expanded = showVoiceMenu, onDismissRequest = { showVoiceMenu = false }) {
+                            VoiceMode.entries.forEach { mode ->
+                                DropdownMenuItem(
+                                    text = { Text(mode.label) },
+                                    leadingIcon = {
+                                        if (mode == voiceMode) Icon(Icons.Default.Check, null)
+                                        else Icon(Icons.Default.RecordVoiceOver, null)
+                                    },
+                                    onClick = {
+                                        voiceMode = mode
+                                        NarrationClient.setVoiceMode(context, current.id, mode)
+                                        showVoiceMenu = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Text("Música adaptativa · ${moodSnapshot.mood.label}", style = MaterialTheme.typography.titleSmall)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.VolumeDown, "Volumen", modifier = Modifier.size(20.dp))
+                    Slider(
+                        value = ambientVolume,
+                        onValueChange = { ambientVolume = it },
+                        onValueChangeFinished = { NarrationClient.setAmbientVolume(context, ambientVolume) },
+                        valueRange = 0f..1f,
+                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                    )
+                    Text("${(ambientVolume * 100).roundToInt()}%", style = MaterialTheme.typography.labelMedium)
+                }
+
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Spellcheck, null, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Corregir errores evidentes", style = MaterialTheme.typography.titleSmall)
+                        Text("Sólo para la voz; el libro original no cambia", style = MaterialTheme.typography.labelSmall, color = BookFlowMuted)
+                    }
+                    Switch(
+                        checked = spellingCorrectionEnabled,
+                        onCheckedChange = { enabled ->
+                            spellingCorrectionEnabled = enabled
+                            NarrationClient.setSpellingCorrection(context, enabled)
+                        }
+                    )
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Página ${pagerState.currentPage + 1} de ${chunks.size.coerceAtLeast(1)} · $percentLabel% leído",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = BookFlowMuted
+                )
+                Spacer(Modifier.height(24.dp))
+            }
+        }
+    }
+
     Scaffold(
+        containerColor = BookFlowGraphite,
         topBar = {
             TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = BookFlowGraphite,
+                    titleContentColor = BookFlowPageText,
+                    actionIconContentColor = BookFlowGold,
+                    navigationIconContentColor = BookFlowGold
+                ),
                 title = {
                     Column {
                         Text(display.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
                             currentChapter?.title ?: display.author,
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = BookFlowMuted,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -655,6 +790,12 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                 },
                 navigationIcon = { IconButton(onClick = back) { Icon(Icons.Default.ArrowBack, "Volver") } },
                 actions = {
+                    TextButton(onClick = { showPagePicker = true }, enabled = chunks.isNotEmpty()) {
+                        Text(
+                            if (chunks.isEmpty()) "—" else "${pagerState.currentPage + 1}/${chunks.size}",
+                            color = BookFlowGold
+                        )
+                    }
                     IconButton(onClick = { showChapters = true }) { Icon(Icons.Default.List, "Capítulos") }
                     IconButton(onClick = {
                         scope.launch {
@@ -667,215 +808,181 @@ private fun ReaderScreen(repository: BookRepository, bookId: Long, back: () -> U
                             if (current.bookmarked) "Quitar marcador" else "Marcar libro"
                         )
                     }
+                    IconButton(onClick = { showReaderSettings = true }) { Icon(Icons.Default.Tune, "Ajustes") }
                 }
             )
         },
         bottomBar = {
-            Surface(tonalElevation = 3.dp) {
+            Surface(
+                color = BookFlowPanel,
+                contentColor = BookFlowPageText,
+                shadowElevation = 10.dp
+            ) {
                 Column(Modifier.fillMaxWidth().navigationBarsPadding()) {
-                    LinearProgressIndicator(progress = { readingPercent }, modifier = Modifier.fillMaxWidth())
-
-                    speechError?.let { error ->
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.ErrorOutline, null, tint = MaterialTheme.colorScheme.error)
-                            Spacer(Modifier.width(8.dp))
-                            Text(error, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    selectedStartPosition?.let { selected ->
+                        Surface(
+                            color = BookFlowGold.copy(alpha = 0.10f),
+                            contentColor = BookFlowPageText
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.TouchApp, null, tint = BookFlowGold)
+                                Spacer(Modifier.width(8.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text("Punto de inicio elegido", style = MaterialTheme.typography.labelLarge)
+                                    Text(
+                                        "Página ${ReadingChunker.indexForPosition(chunks, selected) + 1}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = BookFlowMuted
+                                    )
+                                }
+                                TextButton(onClick = {
+                                    manualPosition = selected
+                                    selectedStartPosition = null
+                                    NarrationClient.start(context, current.id, selected, speechRate)
+                                }) { Text("Leer desde aquí", color = BookFlowGold) }
+                                IconButton(onClick = { selectedStartPosition = null }) {
+                                    Icon(Icons.Default.Close, "Cancelar selección")
+                                }
+                            }
                         }
                     }
 
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    speechError?.let { error ->
+                        Text(
+                            error,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 5.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            enabled = chunks.isNotEmpty() && pagerState.currentPage > 0,
+                            onClick = {
+                                selectedStartPosition = null
+                                scope.launch { pagerState.animateScrollToPage((pagerState.currentPage - 1).coerceAtLeast(0)) }
+                            }
+                        ) { Icon(Icons.Default.ChevronLeft, "Página anterior") }
+
                         FilledTonalIconButton(
+                            modifier = Modifier.size(54.dp),
                             enabled = current.content.isNotBlank(),
                             onClick = {
                                 if (isSpeaking) {
                                     NarrationClient.pause(context)
                                 } else {
-                                    val rawStart = positionFromScroll()
-                                    val start = if (rawStart < structure.readingStart) structure.readingStart else rawStart
+                                    val start = selectedStartPosition ?: positionFromScroll()
+                                    selectedStartPosition = null
                                     manualPosition = start
-                                    if (start != rawStart && chunks.isNotEmpty() && current.content.isNotBlank()) {
-                                        scope.launch {
-                                            val index = ReadingChunker.indexForPosition(chunks, start)
-                                            listState.scrollToItem(index + 1)
-                                        }
-                                    }
                                     NarrationClient.start(context, current.id, start, speechRate)
                                 }
-                            }
+                            },
+                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                containerColor = BookFlowGold,
+                                contentColor = BookFlowGraphite
+                            )
                         ) {
-                            Icon(if (isSpeaking) Icons.Default.Pause else Icons.Default.PlayArrow, if (isSpeaking) "Pausar narración" else "Escuchar libro")
+                            Icon(
+                                if (isSpeaking) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                if (isSpeaking) "Pausar" else "Leer"
+                            )
                         }
-                        Spacer(Modifier.width(10.dp))
+
+                        IconButton(
+                            enabled = chunks.isNotEmpty() && pagerState.currentPage < chunks.lastIndex,
+                            onClick = {
+                                selectedStartPosition = null
+                                scope.launch { pagerState.animateScrollToPage((pagerState.currentPage + 1).coerceAtMost(chunks.lastIndex)) }
+                            }
+                        ) { Icon(Icons.Default.ChevronRight, "Página siguiente") }
+
+                        Spacer(Modifier.width(6.dp))
                         Column(Modifier.weight(1f)) {
                             Text(
                                 when {
-                                    isSpeaking -> "Narrando en segundo plano"
-                                    activeBook -> "En pausa · toca para continuar"
-                                    else -> "Escuchar desde aquí"
+                                    isSpeaking -> "Narrando"
+                                    selectedStartPosition != null -> "Inicio seleccionado"
+                                    activeBook -> "En pausa"
+                                    else -> "Leer desde aquí"
                                 },
                                 style = MaterialTheme.typography.labelLarge
                             )
-                            Text(
-                                if (ambientIsPlaying) "Música · ${moodSnapshot.mood.label} · sonando"
-                                else "Música · ${moodSnapshot.mood.label}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            TextButton(
+                                onClick = { showPagePicker = true },
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Text(
+                                    if (chunks.isEmpty()) "Sin páginas" else "Página ${pagerState.currentPage + 1} de ${chunks.size}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = BookFlowGold
+                                )
+                            }
                         }
+
                         if (activeBook) {
-                            IconButton(onClick = { NarrationClient.stop(context) }) { Icon(Icons.Default.Stop, "Detener narración") }
+                            IconButton(onClick = { NarrationClient.stop(context) }) {
+                                Icon(Icons.Default.Stop, "Detener")
+                            }
+                        }
+                        IconButton(onClick = { showReaderSettings = true }) {
+                            Icon(Icons.Default.Tune, "Ajustes")
                         }
                     }
 
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = {
-                            speechRate = (speechRate - 0.1f).coerceAtLeast(0.6f)
-                            if (activeBook) NarrationClient.setRate(context, speechRate)
-                        }) { Icon(Icons.Default.Remove, "Hablar más lento") }
-                        Text("${"%.1f".format(speechRate)}×", style = MaterialTheme.typography.labelMedium)
-                        IconButton(onClick = {
-                            speechRate = (speechRate + 0.1f).coerceAtMost(1.8f)
-                            if (activeBook) NarrationClient.setRate(context, speechRate)
-                        }) { Icon(Icons.Default.Add, "Hablar más rápido") }
-
-                        Box {
-                            TextButton(onClick = { showVoiceMenu = true }) {
-                                Icon(Icons.Default.RecordVoiceOver, null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text(voiceLabel, maxLines = 1)
-                            }
-                            DropdownMenu(expanded = showVoiceMenu, onDismissRequest = { showVoiceMenu = false }) {
-                                VoiceMode.entries.forEach { mode ->
-                                    DropdownMenuItem(
-                                        text = {
-                                            Column {
-                                                Text(mode.label)
-                                                when (mode) {
-                                                    VoiceMode.AUTO -> Text("Según el autor cuando Talevane pueda determinarlo", style = MaterialTheme.typography.bodySmall)
-                                                    VoiceMode.MASCULINE, VoiceMode.FEMININE -> Text("Abre el laboratorio para probar voces reales del teléfono", style = MaterialTheme.typography.bodySmall)
-                                                    VoiceMode.SYSTEM -> Unit
-                                                }
-                                            }
-                                        },
-                                        leadingIcon = {
-                                            if (mode == voiceMode) Icon(Icons.Default.Check, null)
-                                            else Icon(Icons.Default.RecordVoiceOver, null)
-                                        },
-                                        onClick = {
-                                            voiceMode = mode
-                                            NarrationClient.setVoiceMode(context, current.id, mode)
-                                            showVoiceMenu = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(Modifier.weight(1f))
-                        Text("$percentLabel%", style = MaterialTheme.typography.labelLarge)
-                    }
-
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 1.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Default.VolumeDown, "Volumen de música", modifier = Modifier.size(20.dp))
-                        Slider(
-                            value = ambientVolume,
-                            onValueChange = { ambientVolume = it },
-                            onValueChangeFinished = { NarrationClient.setAmbientVolume(context, ambientVolume) },
-                            valueRange = 0f..1f,
-                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
-                        )
-                        Text("${(ambientVolume * 100).roundToInt()}%", style = MaterialTheme.typography.labelMedium)
-                    }
-
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Default.Spellcheck, "Corrección de narración", modifier = Modifier.size(20.dp))
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("Corregir errores evidentes al narrar", style = MaterialTheme.typography.labelMedium)
-                            Text(
-                                "No modifica el libro y evita corregir nombres propios",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = spellingCorrectionEnabled,
-                            onCheckedChange = { enabled ->
-                                spellingCorrectionEnabled = enabled
-                                NarrationClient.setSpellingCorrection(context, enabled)
-                            }
-                        )
-                    }
-
-                    HorizontalDivider()
-                    Text(
-                        "Toca cualquier palabra para saltar ahí · seguimiento automático activo",
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 7.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    LinearProgressIndicator(
+                        progress = { readingPercent },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = BookFlowGold,
+                        trackColor = BookFlowGold.copy(alpha = 0.12f)
                     )
                 }
             }
         }
     ) { padding ->
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(horizontal = 24.dp, vertical = 20.dp)
-        ) {
-            item(key = "reader-header") {
-                Column {
-                    Text(display.title, style = MaterialTheme.typography.headlineMedium, fontFamily = FontFamily.Serif)
-                    Spacer(Modifier.height(6.dp))
-                    Text(display.author, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(14.dp))
-                    MoodCard(moodSnapshot, ambientIsPlaying, ambientVolume)
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "Toca una frase para escuchar desde ahí",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(22.dp))
-                }
+        if (chunks.isEmpty()) {
+            Box(
+                Modifier.fillMaxSize().padding(padding).padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("No se pudo extraer texto legible de este archivo.", color = BookFlowMuted)
             }
-
-            if (chunks.isEmpty()) {
-                item(key = "empty-text") {
-                    Text("No se pudo extraer texto legible de este archivo.")
-                }
-            } else {
-                itemsIndexed(
-                    items = chunks,
-                    key = { _, chunk -> chunk.start }
-                ) { index, chunk ->
-                    TappableReadingChunk(
-                        chunk = chunk,
-                        highlightStart = if (isSpeaking) narrationState.highlightStart else -1,
-                        highlightEnd = if (isSpeaking) narrationState.highlightEnd else -1,
-                        onTapPosition = { tappedPosition ->
-                            val start = wordStartForTap(current.content, tappedPosition)
-                            manualPosition = start
-                            followedChunkIndex = ReadingChunker.indexForPosition(chunks, start)
-                            scope.launch { repository.saveProgress(current.id, start) }
-                            NarrationClient.start(context, current.id, start, speechRate)
-                        }
-                    )
-                    if (index != chunks.lastIndex) Spacer(Modifier.height(12.dp))
-                }
+        } else {
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize().padding(padding),
+                contentPadding = PaddingValues(horizontal = 2.dp),
+                pageSpacing = 2.dp,
+                beyondViewportPageCount = 1
+            ) { page ->
+                val chunk = chunks[page]
+                BookFlowPage(
+                    chunk = chunk,
+                    pageNumber = page + 1,
+                    pageCount = chunks.size,
+                    fontSizeSp = fontSize,
+                    selectedPosition = selectedStartPosition,
+                    highlightStart = if (isSpeaking) narrationState.highlightStart else -1,
+                    highlightEnd = if (isSpeaking) narrationState.highlightEnd else -1,
+                    onTapPosition = { tappedPosition ->
+                        val start = wordStartForTap(current.content, tappedPosition)
+                        if (isSpeaking) NarrationClient.pause(context)
+                        selectedStartPosition = start
+                        manualPosition = start
+                        followedChunkIndex = ReadingChunker.indexForPosition(chunks, start)
+                        scope.launch { repository.saveProgress(current.id, start) }
+                    }
+                )
             }
-
-            item(key = "reader-footer") { Spacer(Modifier.height(80.dp)) }
         }
     }
+
 }
 
 @Composable
