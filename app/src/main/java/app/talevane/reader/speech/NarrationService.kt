@@ -84,6 +84,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         private const val NOTIFICATION_ID = 4104
         private const val PREFS_AUDIO = "talevane_audio"
         private const val PREF_AMBIENT_VOLUME = "ambient_volume"
+        private const val BUFFER_TARGET_CHUNKS = 3
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -118,6 +119,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
     private var lastReportedPosition = 0
     private var lastError: String? = null
     private var speechGeneration = 0L
+    private var speechBufferTailPosition = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -244,21 +246,18 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                 if (chunk.generation != speechGeneration) return
                 mainHandler.post {
                     if (chunk.generation != speechGeneration || !pendingStart) return@post
-                    queuedOrPreparingStarts.remove(chunk.requestedStart)
+                    val wasSpeaking = isSpeaking
                     isSpeaking = true
                     lastError = null
-                    updateAmbientMood(force = true)
-                    if (ambientVolume > 0f) {
-                        ambientSound.start(moodSnapshot.mood, moodSnapshot.intensity, ambientVolume)
+                    if (!wasSpeaking) {
+                        updateAmbientMood(force = true)
+                        if (ambientVolume > 0f) {
+                            ambientSound.start(moodSnapshot.mood, moodSnapshot.intensity, ambientVolume)
+                        }
+                    } else {
+                        updateAmbientMood()
                     }
-                    if (chunk.end < currentContent.length) {
-                        queueNextChunk(
-                            startPosition = chunk.end,
-                            generation = chunk.generation,
-                            fastStart = false,
-                            queueMode = TextToSpeech.QUEUE_ADD
-                        )
-                    }
+                    fillSpeechBuffer(chunk.generation)
                     updatePlaybackState()
                     publishState()
                     refreshNotification()
@@ -270,6 +269,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                 if (chunk.generation != speechGeneration) return
                 mainHandler.post {
                     if (chunk.generation != speechGeneration) return@post
+                    queuedOrPreparingStarts.remove(chunk.requestedStart)
                     currentPosition = chunk.end.coerceAtMost(currentContent.length)
                     lastReportedPosition = currentPosition
                     highlightStart = -1
@@ -278,17 +278,11 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                     persistPosition()
 
                     if (!pendingStart) return@post
-                    if (currentPosition >= currentContent.length) {
+                    val exhausted = speechBufferTailPosition >= currentContent.length
+                    if (currentPosition >= currentContent.length || (exhausted && queuedOrPreparingStarts.isEmpty())) {
                         finishNarration()
                     } else {
-                        // Usually the next fragment was already prepared while this one was speaking.
-                        // If the TTS engine was faster than preparation, this call is the fallback.
-                        queueNextChunk(
-                            startPosition = currentPosition,
-                            generation = chunk.generation,
-                            fastStart = false,
-                            queueMode = TextToSpeech.QUEUE_ADD
-                        )
+                        fillSpeechBuffer(chunk.generation)
                     }
                 }
             }
@@ -330,7 +324,6 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                 highlightStart = absoluteStart
                 highlightEnd = absoluteEnd
 
-                // Karaoke needs every timing range, but Room does not need a write for every word.
                 if (kotlin.math.abs(absoluteStart - lastReportedPosition) >= 80) {
                     lastReportedPosition = absoluteStart
                     updateAmbientMood()
@@ -353,7 +346,6 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
             return
         }
 
-        // Replaying or resuming the same book must not hit Room or rescan the whole source.
         if (bookId == currentBookId && currentContent.isNotBlank()) {
             currentPosition = requestedPosition.coerceIn(0, currentContent.length)
             highlightStart = -1
@@ -427,17 +419,29 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         ambientSound.pause()
         chunkPositions.clear()
         queuedOrPreparingStarts.clear()
+        speechBufferTailPosition = currentPosition.coerceIn(0, currentContent.length)
         engine.setSpeechRate(speechRate)
         applyVoiceProfile()
         pendingStart = true
 
-        // Only the first small fragment is prepared before speech begins. Everything after it
-        // is produced progressively while the listener is already hearing the book.
         queueNextChunk(
-            startPosition = currentPosition,
+            startPosition = speechBufferTailPosition,
             generation = generation,
             fastStart = true,
             queueMode = TextToSpeech.QUEUE_FLUSH
+        )
+    }
+
+    private fun fillSpeechBuffer(generation: Long) {
+        if (!pendingStart || generation != speechGeneration || currentContent.isBlank()) return
+        if (speechBufferTailPosition >= currentContent.length) return
+        if (queuedOrPreparingStarts.size >= BUFFER_TARGET_CHUNKS) return
+
+        queueNextChunk(
+            startPosition = speechBufferTailPosition,
+            generation = generation,
+            fastStart = false,
+            queueMode = TextToSpeech.QUEUE_ADD
         )
     }
 
@@ -450,7 +454,8 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         if (!pendingStart || generation != speechGeneration || currentContent.isBlank()) return
         val safeStart = startPosition.coerceIn(0, currentContent.length)
         if (safeStart >= currentContent.length) {
-            finishNarration()
+            speechBufferTailPosition = currentContent.length
+            if (!isSpeaking && queuedOrPreparingStarts.isEmpty()) finishNarration()
             return
         }
         if (!queuedOrPreparingStarts.add(safeStart)) return
@@ -482,7 +487,8 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
 
                 if (chunk == null) {
                     queuedOrPreparingStarts.remove(safeStart)
-                    finishNarration()
+                    speechBufferTailPosition = currentContent.length
+                    if (!isSpeaking && queuedOrPreparingStarts.isEmpty()) finishNarration()
                     return@post
                 }
 
@@ -500,7 +506,11 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                     chunkPositions.remove(utteranceId)
                     queuedOrPreparingStarts.remove(safeStart)
                     failNarration("El motor de voz no pudo preparar este fragmento.")
+                    return@post
                 }
+
+                speechBufferTailPosition = maxOf(speechBufferTailPosition, chunk.end)
+                fillSpeechBuffer(generation)
             }
         }
     }
@@ -521,7 +531,6 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         while (cursor < text.length) {
             var end = (cursor + maxChunk).coerceAtMost(text.length)
             if (end < text.length) {
-                // Split on real punctuation only. PDF line wrapping must never create a speech break.
                 val split = text.lastIndexOfAny(charArrayOf('.', '!', '?', ';', ':'), end - 1)
                 if (split >= cursor + minimumUsefulSplit) end = split + 1
             }
@@ -557,7 +566,9 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         isSpeaking = false
         highlightStart = -1
         highlightEnd = -1
+        chunkPositions.clear()
         queuedOrPreparingStarts.clear()
+        speechBufferTailPosition = currentPosition.coerceIn(0, currentContent.length)
         ambientSound.pause()
         updatePlaybackState()
         publishState()
@@ -571,6 +582,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         tts?.stop()
         chunkPositions.clear()
         queuedOrPreparingStarts.clear()
+        speechBufferTailPosition = currentPosition.coerceIn(0, currentContent.length)
         highlightStart = -1
         highlightEnd = -1
         ambientSound.pause()
@@ -598,6 +610,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         tts?.stop()
         chunkPositions.clear()
         queuedOrPreparingStarts.clear()
+        speechBufferTailPosition = currentPosition.coerceIn(0, currentContent.length)
         isSpeaking = false
         highlightStart = -1
         highlightEnd = -1
@@ -622,6 +635,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         tts?.stop()
         chunkPositions.clear()
         queuedOrPreparingStarts.clear()
+        speechBufferTailPosition = currentPosition.coerceIn(0, currentContent.length)
         isSpeaking = false
         highlightStart = -1
         highlightEnd = -1
@@ -644,12 +658,6 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         serviceScope.launch { dao.updateProgress(id, position) }
     }
 
-    /**
-     * Builds a TTS-only view of the canonical text without changing its length.
-     * PDF layout line/paragraph breaks become spaces. Talevane never invents punctuation:
-     * only punctuation already present in the canonical source controls TTS cadence.
-     * Keeping one output char per source char preserves TextToSpeech range -> canonical mapping.
-     */
     private fun prepareSpeechText(raw: String): String {
         if (raw.none { it == '\n' || it == '\r' || it == '\t' || it == '/' }) return raw
 
@@ -661,9 +669,6 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                     val previous = raw.getOrNull(i - 1)
                     val next = raw.getOrNull(i + 1)
                     if (previous?.isLetter() == true && next?.isLetter() == true) {
-                        // Some Android TTS engines spell slash-joined words letter by letter.
-                        // Replace only letter/letter slashes in the speech-only copy. The comma
-                        // preserves the exact character count used by karaoke highlighting.
                         chars[i] = ','
                     }
                     i += 1
@@ -675,17 +680,9 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                 '\n', '\r' -> {
                     val runStart = i
                     var runEnd = i
-                    var logicalBreaks = 0
                     while (runEnd < raw.length && (raw[runEnd] == '\n' || raw[runEnd] == '\r')) {
-                        if (raw[runEnd] == '\n' || (raw[runEnd] == '\r' && (runEnd + 1 >= raw.length || raw[runEnd + 1] != '\n'))) {
-                            logicalBreaks += 1
-                        }
                         runEnd += 1
                     }
-
-                    // Never invent punctuation for PDF layout. Real punctuation already present
-                    // in the canonical source drives cadence; visual line/paragraph breaks become spaces.
-                    // This keeps offsets one-to-one while avoiding the hard, "hit" pauses some PDFs caused.
                     chars[runStart] = ' '
                     for (j in runStart + 1 until runEnd) chars[j] = ' '
                     i = runEnd
