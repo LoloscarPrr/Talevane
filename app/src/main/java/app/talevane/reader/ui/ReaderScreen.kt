@@ -17,6 +17,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.talevane.reader.application.library.BookLibrary
 import app.talevane.reader.chapters.BookChapter
@@ -32,15 +34,24 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
+private class ReaderViewModelStoreOwner : ViewModelStoreOwner {
+    override val viewModelStore = ViewModelStore()
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ReaderScreen(repository: BookLibrary, bookId: Long, back: () -> Unit) {
     val scope = rememberCoroutineScope()
     val appContext = LocalContext.current.applicationContext
+    val readerOwner = remember(bookId) { ReaderViewModelStoreOwner() }
+    DisposableEffect(readerOwner) {
+        onDispose { readerOwner.viewModelStore.clear() }
+    }
     val factory = remember(bookId, repository, appContext) {
         ReaderViewModelFactory(appContext, repository, bookId)
     }
     val readerViewModel: ReaderViewModel = viewModel(
+        viewModelStoreOwner = readerOwner,
         key = "reader-$bookId",
         factory = factory
     )
