@@ -27,10 +27,11 @@ class MainActivity : ComponentActivity() {
 
         handleIncomingBook(intent)
 
-        val repository = (application as TalevaneApp).repository
+        val app = application as TalevaneApp
         setContent {
             TalevaneRoot(
-                repository = repository,
+                repository = app.repository,
+                narrationGateway = app.narrationGateway,
                 incomingBookUri = incomingBookUri,
                 onIncomingBookHandled = { incomingBookUri = null }
             )
