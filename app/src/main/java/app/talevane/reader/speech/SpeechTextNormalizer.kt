@@ -10,9 +10,9 @@ internal data class NormalizedSpeechText(
 /**
  * Produces a speech-only version of book text.
  *
- * The canonical book is never modified. Only exact, high-confidence misspellings are corrected,
- * and words that look like proper names are protected. A boundary map keeps Android TTS timing
- * aligned with the original book even when a correction changes the number of characters.
+ * The canonical book is never modified. Only exact, high-confidence misspellings and OCR artifacts
+ * are corrected, and words that look like proper names are protected. A boundary map keeps Android
+ * TTS timing aligned with the original book even when a correction changes the number of characters.
  */
 internal object SpeechTextNormalizer {
     private val spanish = Locale("es", "ES")
@@ -104,7 +104,7 @@ internal object SpeechTextNormalizer {
     ): NormalizedSpeechText {
         if (raw.isEmpty()) return NormalizedSpeechText("", intArrayOf(0))
 
-        // First preserve the stable v0.6.9.6 layout/slash behavior. These substitutions are 1:1.
+        // Preserve the stable layout/slash behavior. These substitutions are 1:1.
         val chars = raw.toCharArray()
         var i = 0
         while (i < raw.length) {
@@ -137,32 +137,37 @@ internal object SpeechTextNormalizer {
             return NormalizedSpeechText(speechBase, IntArray(speechBase.length + 1) { it })
         }
 
+        // Some PDFs expose broken font/OCR mappings such as "condici6n" or "psic61ogo".
+        // Repair only narrow lowercase Spanish-looking patterns. Every replacement is 1:1, so the
+        // canonical offset map remains an identity map at this stage.
+        val ocrRepaired = repairObviousOcrDigits(speechBase)
+
         data class Correction(val start: Int, val end: Int, val replacement: String)
         val corrections = ArrayList<Correction>()
 
-        wordRegex.findAll(speechBase).forEach { match ->
+        wordRegex.findAll(ocrRepaired).forEach { match ->
             val token = match.value
             val lower = token.lowercase(spanish)
 
             // Proper names/acronyms are left alone. Corrections only apply to lowercase tokens.
             if (token != lower || lower in protectedTerms) return@forEach
-            if (looksTechnical(speechBase, match.range.first, match.range.last + 1)) return@forEach
+            if (looksTechnical(ocrRepaired, match.range.first, match.range.last + 1)) return@forEach
 
             val replacement = obviousTypos[lower] ?: return@forEach
             corrections += Correction(match.range.first, match.range.last + 1, replacement)
         }
 
         if (corrections.isEmpty()) {
-            return NormalizedSpeechText(speechBase, IntArray(speechBase.length + 1) { it })
+            return NormalizedSpeechText(ocrRepaired, IntArray(ocrRepaired.length + 1) { it })
         }
 
-        val output = StringBuilder(speechBase.length)
-        val boundaries = ArrayList<Int>(speechBase.length + 1)
+        val output = StringBuilder(ocrRepaired.length)
+        val boundaries = ArrayList<Int>(ocrRepaired.length + 1)
         boundaries += 0
         var sourceCursor = 0
 
         corrections.forEach { correction ->
-            appendIdentity(speechBase, sourceCursor, correction.start, output, boundaries)
+            appendIdentity(ocrRepaired, sourceCursor, correction.start, output, boundaries)
             appendMapped(
                 replacement = correction.replacement,
                 sourceStart = correction.start,
@@ -172,10 +177,58 @@ internal object SpeechTextNormalizer {
             )
             sourceCursor = correction.end
         }
-        appendIdentity(speechBase, sourceCursor, speechBase.length, output, boundaries)
+        appendIdentity(ocrRepaired, sourceCursor, ocrRepaired.length, output, boundaries)
 
         return NormalizedSpeechText(output.toString(), boundaries.toIntArray())
     }
+
+    private fun repairObviousOcrDigits(text: String): String {
+        if (text.none { it == '6' || it == '1' }) return text
+
+        val repaired = text.toCharArray()
+        text.forEachIndexed { index, char ->
+            when (char) {
+                '6' -> {
+                    val previous = text.getOrNull(index - 1)
+                    val next = text.getOrNull(index + 1)
+                    val afterNext = text.getOrNull(index + 2)
+                    val hasStem = hasLowercaseStem(text, index, minimum = 3)
+
+                    val looksLikeOnEnding = hasStem && previous?.isLowerCase() == true &&
+                        next == 'n' && isTokenBoundary(afterNext)
+                    val looksLikeOlSequence = hasStem && previous?.isLowerCase() == true &&
+                        next == '1' && afterNext?.isLowerCase() == true
+
+                    if (looksLikeOnEnding || looksLikeOlSequence) repaired[index] = 'ó'
+                }
+
+                '1' -> {
+                    val previous = text.getOrNull(index - 1)
+                    val next = text.getOrNull(index + 1)
+                    if (
+                        previous == '6' &&
+                        next?.isLowerCase() == true &&
+                        hasLowercaseStem(text, index - 1, minimum = 3)
+                    ) {
+                        repaired[index] = 'l'
+                    }
+                }
+            }
+        }
+        return String(repaired)
+    }
+
+    private fun hasLowercaseStem(text: String, digitIndex: Int, minimum: Int): Boolean {
+        var count = 0
+        var cursor = digitIndex - 1
+        while (cursor >= 0 && text[cursor].isLowerCase()) {
+            count += 1
+            cursor -= 1
+        }
+        return count >= minimum
+    }
+
+    private fun isTokenBoundary(char: Char?): Boolean = char == null || !char.isLetterOrDigit()
 
     private fun appendIdentity(
         source: String,
