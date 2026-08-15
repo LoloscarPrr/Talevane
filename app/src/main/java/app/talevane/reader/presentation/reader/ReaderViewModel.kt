@@ -1,5 +1,6 @@
 package app.talevane.reader.presentation.reader
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -13,6 +14,7 @@ import app.talevane.reader.library.BookPresenter
 import app.talevane.reader.mood.MoodEngine
 import app.talevane.reader.mood.MoodSnapshot
 import app.talevane.reader.mood.ReadingMood
+import app.talevane.reader.speech.AndroidNarrationGateway
 import app.talevane.reader.speech.AuthorVoiceProfile
 import app.talevane.reader.speech.VoiceMode
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -282,6 +284,12 @@ class ReaderViewModelFactory(
     private val narrationGateway: NarrationGateway,
     private val bookId: Long
 ) : ViewModelProvider.Factory {
+    constructor(context: Context, library: BookLibrary, bookId: Long) : this(
+        library = library,
+        narrationGateway = AndroidNarrationGateway(context.applicationContext),
+        bookId = bookId
+    )
+
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(ReaderViewModel::class.java)) {
