@@ -5,6 +5,9 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
+val stableKeystorePath = System.getenv("TALEVANE_KEYSTORE_PATH")
+val hasStableKeystore = !stableKeystorePath.isNullOrBlank() && file(stableKeystorePath).exists()
+
 android {
     namespace = "app.talevane.reader"
     compileSdk = 35
@@ -12,9 +15,26 @@ android {
         applicationId = "app.talevane.reader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 34
-        versionName = "0.7.5"
+        versionCode = 35
+        versionName = "0.7.6"
     }
+
+    if (hasStableKeystore) {
+        signingConfigs {
+            create("stable") {
+                storeFile = file(stableKeystorePath!!)
+                storePassword = "TalevaneStable2026!"
+                keyAlias = "talevane"
+                keyPassword = "TalevaneStable2026!"
+            }
+        }
+        buildTypes {
+            getByName("debug") {
+                signingConfig = signingConfigs.getByName("stable")
+            }
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
