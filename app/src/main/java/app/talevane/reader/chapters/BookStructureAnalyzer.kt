@@ -27,6 +27,10 @@ object BookStructureAnalyzer {
         val strength: Int
     )
 
+    private val whitespaceRegex = Regex("\\s+")
+    private val combiningMarksRegex = Regex("\\p{Mn}+")
+    private val nonAlphaNumericRegex = Regex("[^a-z0-9 ]+")
+
     private val explicitHeading = Regex(
         "^(?:(?:cap[íi]tulo|chapter|secci[oó]n|section|parte|part|libro|book)\\s+(?:[ivxlcdm]+|\\d+|[a-záéíóúñ]+)?(?:\\s*[-—.:]\\s*.*|\\s+.*)?|(?:pr[oó]logo|prefacio|introducci[oó]n|ep[íi]logo|conclusi[oó]n|ap[eé]ndice)(?:\\s+.*)?)$",
         RegexOption.IGNORE_CASE
@@ -42,6 +46,7 @@ object BookStructureAnalyzer {
         "segunda edición", "tercera edicion", "tercera edición", "buenos aires", "madrid",
         "barcelona", "mexico", "méxico", "editor", "maquetacion", "maquetación"
     )
+    private val normalizedFrontMatterTerms = frontMatterTerms.map(::normalize)
 
     private val indexTerms = setOf(
         "indice", "índice", "contenido", "contenidos", "contents", "table of contents", "sumario"
@@ -53,7 +58,6 @@ object BookStructureAnalyzer {
 
         val lines = lines(content)
         val candidates = lines.mapNotNull(::candidate)
-            .filterNot { isFrontMatter(it.title) || normalize(it.title) in normalizedIndexTerms }
 
         if (candidates.isEmpty()) {
             val fallback = fallbackReadingStart(lines, content.length)
@@ -106,7 +110,7 @@ object BookStructureAnalyzer {
     }
 
     private fun candidate(line: LineEntry): Candidate? {
-        val title = line.text.trim().replace(Regex("\\s+"), " ")
+        val title = line.text.trim().replace(whitespaceRegex, " ")
         if (title.length !in 1..90 || isFrontMatter(title)) return null
 
         if (explicitHeading.matches(title)) return Candidate(title, line.start, 5)
@@ -116,7 +120,7 @@ object BookStructureAnalyzer {
         val letters = title.filter { it.isLetter() }
         if (letters.length < 3) return null
         val uppercaseRatio = letters.count { it.isUpperCase() }.toDouble() / letters.length
-        val words = title.split(Regex("\\s+")).filter { it.isNotBlank() }
+        val words = title.split(whitespaceRegex).filter { it.isNotBlank() }
 
         if (uppercaseRatio >= 0.88 && words.size <= 12 && title.length <= 78 && !title.endsWith('.')) {
             return Candidate(title, line.start, 3)
@@ -166,11 +170,11 @@ object BookStructureAnalyzer {
         val normalized = normalize(value)
         if (normalized.isBlank()) return true
         if (normalized in normalizedIndexTerms) return true
-        return frontMatterTerms.any { term -> normalized.contains(normalize(term)) }
+        return normalizedFrontMatterTerms.any(normalized::contains)
     }
 
     private fun cleanTitle(value: String): String {
-        val compact = value.trim().replace(Regex("\\s+"), " ")
+        val compact = value.trim().replace(whitespaceRegex, " ")
         val letters = compact.filter { it.isLetter() }
         val upperRatio = if (letters.isEmpty()) 0.0 else letters.count { it.isUpperCase() }.toDouble() / letters.length
         return if (upperRatio > 0.9 && compact.length > 3) {
@@ -181,9 +185,9 @@ object BookStructureAnalyzer {
     private fun normalize(value: String): String {
         val decomposed = Normalizer.normalize(value.lowercase(), Normalizer.Form.NFD)
         return decomposed
-            .replace(Regex("\\p{Mn}+"), "")
-            .replace(Regex("[^a-z0-9 ]+"), " ")
-            .replace(Regex("\\s+"), " ")
+            .replace(combiningMarksRegex, "")
+            .replace(nonAlphaNumericRegex, " ")
+            .replace(whitespaceRegex, " ")
             .trim()
     }
 }

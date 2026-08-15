@@ -17,8 +17,7 @@ class OpenBook(private val library: BookLibrary) {
 
 sealed interface PrepareReadingResult {
     data class Ready(
-        val chunks: List<ReadingChunk>,
-        val structure: BookStructure
+        val chunks: List<ReadingChunk>
     ) : PrepareReadingResult
 
     data class Failed(val message: String) : PrepareReadingResult
@@ -43,18 +42,20 @@ class PrepareReading {
             return PrepareReadingResult.Failed("El libro no contiene texto legible para mostrar.")
         }
 
-        val structure = runCatching {
-            withContext(Dispatchers.Default) {
-                BookStructureAnalyzer.analyze(content)
-            }
-        }.getOrElse {
-            BookStructure(
-                chapters = listOf(BookChapter("Inicio", 0)),
-                readingStart = 0
-            )
-        }
+        return PrepareReadingResult.Ready(chunks)
+    }
+}
 
-        return PrepareReadingResult.Ready(chunks, structure)
+class AnalyzeBookStructure {
+    suspend operator fun invoke(content: String): BookStructure = runCatching {
+        withContext(Dispatchers.Default) {
+            BookStructureAnalyzer.analyze(content)
+        }
+    }.getOrElse {
+        BookStructure(
+            chapters = listOf(BookChapter("Inicio", 0)),
+            readingStart = 0
+        )
     }
 }
 
@@ -90,6 +91,7 @@ class ToggleBookmark(private val library: BookLibrary) {
 data class ReaderUseCases(
     val openBook: OpenBook,
     val prepareReading: PrepareReading,
+    val analyzeBookStructure: AnalyzeBookStructure,
     val resumeReading: ResumeReading,
     val saveReadingProgress: SaveReadingProgress,
     val toggleBookmark: ToggleBookmark
@@ -98,6 +100,7 @@ data class ReaderUseCases(
         fun create(library: BookLibrary) = ReaderUseCases(
             openBook = OpenBook(library),
             prepareReading = PrepareReading(),
+            analyzeBookStructure = AnalyzeBookStructure(),
             resumeReading = ResumeReading(),
             saveReadingProgress = SaveReadingProgress(library),
             toggleBookmark = ToggleBookmark(library)
