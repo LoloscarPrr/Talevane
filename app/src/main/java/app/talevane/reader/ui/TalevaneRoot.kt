@@ -15,13 +15,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import app.talevane.reader.application.narration.NarrationGateway
 import app.talevane.reader.data.BookRepository
 
 @Composable
 fun TalevaneRoot(
     repository: BookRepository,
-    narrationGateway: NarrationGateway,
     incomingBookUri: Uri? = null,
     onIncomingBookHandled: () -> Unit = {}
 ) {
@@ -50,7 +48,7 @@ fun TalevaneRoot(
             if (activeBookId == null) {
                 LibraryScreen(repository) { readerId = it }
             } else {
-                ReaderScreen(repository, narrationGateway, activeBookId) { readerId = null }
+                ReaderScreen(repository, activeBookId) { readerId = null }
             }
         }
 
