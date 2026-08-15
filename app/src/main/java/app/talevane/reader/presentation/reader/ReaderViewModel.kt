@@ -105,11 +105,15 @@ class ReaderViewModel(
 
         when (val prepared = readerUseCases.prepareReading(content)) {
             is PrepareReadingResult.Ready -> {
+                // Pages are enough to enter the reader. Chapter analysis continues afterwards
+                // so large books never keep the user behind the loading screen unnecessarily.
                 _state.value = _state.value.copy(
                     chunks = prepared.chunks,
-                    structure = prepared.structure,
                     preparationError = null
                 )
+
+                val structure = readerUseCases.analyzeBookStructure(content)
+                _state.value = _state.value.copy(structure = structure)
             }
 
             is PrepareReadingResult.Failed -> {
