@@ -27,6 +27,22 @@ jobs:
       - name: Install Android SDK
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
+      - name: Restore stable Talevane signing key
+        env:
+          TALEVANE_KEYSTORE_B64: ${{ secrets.TALEVANE_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$TALEVANE_KEYSTORE_B64" ]; then
+            KEYSTORE_PATH="$RUNNER_TEMP/talevane-update-key.p12"
+            printf '%s' "$TALEVANE_KEYSTORE_B64" | base64 --decode > "$KEYSTORE_PATH"
+            echo "TALEVANE_KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+            echo "Stable signing key restored."
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "Stable signing secret not available; PR will compile with temporary debug signing only."
+          else
+            echo "Missing required repository secret TALEVANE_KEYSTORE_B64. Refusing to publish an APK with a different signature."
+            exit 1
+          fi
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
