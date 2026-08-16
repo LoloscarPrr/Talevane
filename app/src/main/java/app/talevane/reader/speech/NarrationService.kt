@@ -488,7 +488,6 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                     .thenBy { it.name }
             )
             .firstOrNull()
-    }
 
     private fun speakCurrent() {
         val engine = tts ?: return
