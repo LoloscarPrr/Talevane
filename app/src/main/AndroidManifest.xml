@@ -35,6 +35,7 @@
                 <data android:mimeType="application/pdf" />
                 <data android:mimeType="application/epub+zip" />
                 <data android:mimeType="application/epub" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
             </intent-filter>
         </activity>
 
