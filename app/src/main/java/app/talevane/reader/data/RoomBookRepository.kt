@@ -2,6 +2,7 @@ package app.talevane.reader.data
 
 import android.content.Context
 import android.net.Uri
+import app.talevane.reader.application.library.BookImportRequest
 import app.talevane.reader.application.library.BookLibrary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -16,7 +17,8 @@ class RoomBookRepository(
     @Volatile
     private var recentImportedBook: BookEntity? = null
 
-    override suspend fun import(uri: Uri): Long = withContext(Dispatchers.IO) {
+    override suspend fun import(request: BookImportRequest): Long = withContext(Dispatchers.IO) {
+        val uri = Uri.parse(request.sourceUri)
         val imported = BookFileImporter.import(context, uri)
         val pending = BookEntity(
             title = imported.title,
