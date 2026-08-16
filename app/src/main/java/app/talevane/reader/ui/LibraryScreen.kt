@@ -60,7 +60,14 @@ internal fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit)
     }
 
     val addBook = {
-        picker.launch(arrayOf("text/plain", "application/pdf", "application/epub+zip"))
+        picker.launch(
+            arrayOf(
+                "text/plain",
+                "application/pdf",
+                "application/epub+zip",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+        )
     }
 
     if (importing) {
@@ -185,7 +192,7 @@ internal fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit)
                         )
                         Spacer(Modifier.height(14.dp))
                         Text(
-                            "Importa EPUB, PDF o TXT. Talevane recuerda tu progreso y prepara la narración para cada lectura.",
+                            "Importa EPUB, PDF, DOCX o TXT. Talevane recuerda tu progreso y prepara la narración para cada lectura.",
                             style = MaterialTheme.typography.bodyLarge,
                             lineHeight = 25.sp,
                             color = BookFlowMuted
