@@ -21,7 +21,7 @@ internal object DocxImporter {
                 val document = secureXmlFactory().newDocumentBuilder()
                     .parse(zip.getInputStream(documentEntry))
 
-                val content = extractParagraphs(document)
+                val content = extractDocumentBlocks(document)
                     .replace(Regex("[ \t]+\n"), "\n")
                     .replace(Regex("\n{3,}"), "\n\n")
                     .trim()
@@ -64,28 +64,61 @@ internal object DocxImporter {
         val author: String?
     )
 
-    private fun extractParagraphs(document: org.w3c.dom.Document): String {
-        val paragraphs = document.getElementsByTagNameNS("*", "p")
+    /**
+     * Walks the Word body in document order. Normal paragraphs, table-cell paragraphs and standalone
+     * display equations are emitted as Talevane reading blocks.
+     */
+    private fun extractDocumentBlocks(document: org.w3c.dom.Document): String {
         val output = StringBuilder()
+        val body = document.getElementsByTagNameNS("*", "body").item(0) ?: document.documentElement
 
-        for (index in 0 until paragraphs.length) {
-            val paragraph = StringBuilder()
-            appendReadableText(paragraphs.item(index), paragraph)
-            val text = paragraph.toString()
+        fun appendBlock(text: String) {
+            val cleaned = text
                 .replace(Regex("[ \t]+"), " ")
                 .replace(Regex(" *\n *"), "\n")
                 .trim()
+            if (cleaned.isBlank()) return
+            if (output.isNotEmpty()) output.append("\n\n")
+            output.append(cleaned)
+        }
 
-            if (text.isNotBlank()) {
-                if (output.isNotEmpty()) output.append("\n\n")
-                output.append(text)
+        fun visit(node: Node) {
+            when (node.localName) {
+                "p" -> {
+                    val paragraph = StringBuilder()
+                    appendReadableText(node, paragraph)
+                    appendBlock(paragraph.toString())
+                    return
+                }
+
+                "oMathPara" -> {
+                    appendBlock(OmmlMathReader.read(node))
+                    return
+                }
+            }
+
+            val children = node.childNodes
+            for (index in 0 until children.length) {
+                visit(children.item(index))
             }
         }
+
+        visit(body)
         return output.toString()
     }
 
     private fun appendReadableText(node: Node, output: StringBuilder) {
         when (node.localName) {
+            // Native Word equations are interpreted structurally instead of flattening their runs.
+            "oMath", "oMathPara" -> {
+                val math = OmmlMathReader.read(node)
+                if (math.isNotBlank()) {
+                    if (output.isNotEmpty() && !output.last().isWhitespace()) output.append(' ')
+                    output.append(math)
+                    output.append(' ')
+                }
+            }
+
             "t" -> output.append(node.textContent.orEmpty())
             "tab" -> output.append(' ')
             "br", "cr" -> output.append('\n')
