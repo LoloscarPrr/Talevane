@@ -24,6 +24,8 @@ import app.talevane.reader.R
 import app.talevane.reader.audio.AmbientSoundEngine
 import app.talevane.reader.data.BookEntity
 import app.talevane.reader.data.TalevaneDatabase
+import app.talevane.reader.language.BookLanguage
+import app.talevane.reader.language.BookLanguageDetector
 import app.talevane.reader.mood.MoodEngine
 import app.talevane.reader.mood.MoodSnapshot
 import app.talevane.reader.mood.ReadingMood
@@ -32,7 +34,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -58,6 +59,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_SET_RATE = "app.talevane.reader.action.NARRATION_RATE"
         const val ACTION_SET_AMBIENT_VOLUME = "app.talevane.reader.action.AMBIENT_VOLUME"
         const val ACTION_SET_VOICE_MODE = "app.talevane.reader.action.VOICE_MODE"
+        const val ACTION_SET_BOOK_LANGUAGE = "app.talevane.reader.action.BOOK_LANGUAGE"
         const val ACTION_SET_SPELLING_CORRECTION = "app.talevane.reader.action.SPELLING_CORRECTION"
         const val ACTION_QUERY = "app.talevane.reader.action.NARRATION_QUERY"
         const val ACTION_STATE = "app.talevane.reader.action.NARRATION_STATE"
@@ -76,6 +78,8 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         const val EXTRA_AMBIENT_ACTIVE = "ambient_active"
         const val EXTRA_MOOD = "mood"
         const val EXTRA_MOOD_INTENSITY = "mood_intensity"
+        const val EXTRA_BOOK_LANGUAGE = "book_language"
+        const val EXTRA_LANGUAGE_LABEL = "language_label"
         const val EXTRA_VOICE_MODE = "voice_mode"
         const val EXTRA_VOICE_LABEL = "voice_label"
         const val EXTRA_CORRECT_OBVIOUS_TYPOS = "correct_obvious_typos"
@@ -112,6 +116,9 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
     private var speechRate = 1.0f
     private var ambientVolume = 0.45f
     private var spellingCorrectionEnabled = true
+    private var currentBookLanguage = BookLanguage.AUTO
+    private var effectiveBookLanguage = BookLanguage.SPANISH
+    private var languageLabel = "Auto · Español"
     private var currentVoiceMode = VoiceMode.AUTO
     private var voiceProfileLabel = "Auto · sistema"
     private var moodSnapshot = MoodSnapshot(ReadingMood.NEUTRAL, 0.15f, 0.25f)
@@ -189,8 +196,22 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                 if (bookId >= 0) VoicePreferenceStore.set(this, bookId, mode)
                 if (bookId == currentBookId) {
                     currentVoiceMode = mode
-                    applyVoiceProfile()
-                    if (isSpeaking) speakCurrent()
+                    if (isSpeaking) speakCurrent() else applyLanguageAndVoiceProfile()
+                    publishState()
+                    refreshNotification()
+                } else if (currentBookId < 0 && !isSpeaking) {
+                    stopSelf(startId)
+                }
+            }
+            ACTION_SET_BOOK_LANGUAGE -> {
+                val bookId = intent.getLongExtra(EXTRA_BOOK_ID, -1L)
+                val language = intent.getStringExtra(EXTRA_BOOK_LANGUAGE)?.let { raw ->
+                    runCatching { BookLanguage.valueOf(raw) }.getOrNull()
+                } ?: BookLanguage.AUTO
+                if (bookId >= 0) BookLanguagePreferenceStore.set(this, bookId, language)
+                if (bookId == currentBookId) {
+                    currentBookLanguage = language
+                    if (isSpeaking) speakCurrent() else applyLanguageAndVoiceProfile()
                     publishState()
                     refreshNotification()
                 } else if (currentBookId < 0 && !isSpeaking) {
@@ -227,10 +248,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
             return
         }
 
-        val result = engine.setLanguage(Locale.getDefault())
-        if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-            engine.setLanguage(Locale("es", "ES"))
-        }
+        engine.setLanguage(BookLanguage.SPANISH.locale())
         defaultVoice = engine.voice
         engine.setSpeechRate(speechRate)
         engine.setAudioAttributes(
@@ -239,7 +257,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                 .build()
         )
-        applyVoiceProfile()
+        applyLanguageAndVoiceProfile()
         engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
                 val chunk = utteranceId?.let(chunkPositions::get) ?: return
@@ -351,6 +369,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
             highlightStart = -1
             highlightEnd = -1
             currentVoiceMode = VoicePreferenceStore.get(this, bookId)
+            currentBookLanguage = BookLanguagePreferenceStore.get(this, bookId)
             lastReportedPosition = currentPosition
             pendingStart = true
             lastError = null
@@ -397,16 +416,78 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         highlightStart = -1
         highlightEnd = -1
         currentVoiceMode = VoicePreferenceStore.get(this, book.id)
+        currentBookLanguage = BookLanguagePreferenceStore.get(this, book.id)
+        val languageResolution = BookLanguageDetector.resolve(currentBookLanguage, currentContent)
+        effectiveBookLanguage = languageResolution.effective
+        languageLabel = languageResolution.label
         lastReportedPosition = currentPosition
         lastMoodBucket = Int.MIN_VALUE
         moodSnapshot = MoodSnapshot(ReadingMood.NEUTRAL, 0.15f, 0.25f)
         ambientSound.setMood(moodSnapshot.mood, moodSnapshot.intensity)
     }
 
-    private fun applyVoiceProfile() {
-        val engine = tts ?: return
-        val result = AuthorVoiceProfile.apply(this, engine, defaultVoice, currentVoiceMode, currentAuthor, currentBookId)
+    private fun applyLanguageAndVoiceProfile(): Boolean {
+        val engine = tts ?: return false
+        val languageResolution = BookLanguageDetector.resolve(currentBookLanguage, currentContent)
+        effectiveBookLanguage = languageResolution.effective
+        languageLabel = languageResolution.label
+
+        val languageCode = effectiveBookLanguage.languageCode.orEmpty()
+        val languageResult = engine.setLanguage(effectiveBookLanguage.locale())
+        val setLanguageSucceeded = languageResult != TextToSpeech.LANG_MISSING_DATA &&
+            languageResult != TextToSpeech.LANG_NOT_SUPPORTED
+
+        var languageVoice = engine.voice?.takeIf { voice ->
+            setLanguageSucceeded &&
+                voice.locale.language.equals(languageCode, ignoreCase = true) &&
+                !voice.features.orEmpty().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)
+        }
+
+        if (languageVoice == null) {
+            val installed = bestInstalledVoiceForLanguage(engine, languageCode)
+            if (installed != null && engine.setVoice(installed) == TextToSpeech.SUCCESS) {
+                languageVoice = installed
+            }
+        }
+
+        if (languageVoice == null) {
+            val languageName = effectiveBookLanguage.label.lowercase()
+            voiceProfileLabel = "Sin voz en $languageName"
+            lastError = "El teléfono no tiene instalada una voz en $languageName. " +
+                "Instálala desde los ajustes de texto a voz y vuelve a intentarlo."
+            return false
+        }
+
+        defaultVoice = languageVoice
+        val result = AuthorVoiceProfile.apply(
+            context = this,
+            engine = engine,
+            defaultVoice = languageVoice,
+            requested = currentVoiceMode,
+            author = currentAuthor,
+            bookId = currentBookId,
+            language = effectiveBookLanguage
+        )
         voiceProfileLabel = result.label
+        lastError = null
+        return true
+    }
+
+    private fun bestInstalledVoiceForLanguage(engine: TextToSpeech, languageCode: String): Voice? =
+        engine.voices
+            .orEmpty()
+            .asSequence()
+            .filter { it.locale.language.equals(languageCode, ignoreCase = true) }
+            .filter {
+                !it.features.orEmpty().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)
+            }
+            .sortedWith(
+                compareBy<Voice> { it.isNetworkConnectionRequired }
+                    .thenByDescending { it.quality }
+                    .thenBy { it.latency }
+                    .thenBy { it.name }
+            )
+            .firstOrNull()
     }
 
     private fun speakCurrent() {
@@ -421,7 +502,10 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         queuedOrPreparingStarts.clear()
         speechBufferTailPosition = currentPosition.coerceIn(0, currentContent.length)
         engine.setSpeechRate(speechRate)
-        applyVoiceProfile()
+        if (!applyLanguageAndVoiceProfile()) {
+            failNarration(lastError ?: "No hay una voz compatible con el idioma de este libro.")
+            return
+        }
         pendingStart = true
 
         queueNextChunk(
@@ -463,6 +547,7 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         val textSnapshot = currentContent
         val protectedSnapshot = protectedSpeechTerms
         val correctionSnapshot = spellingCorrectionEnabled
+        val languageSnapshot = effectiveBookLanguage
         val bookIdSnapshot = currentBookId
 
         serviceScope.launch {
@@ -472,7 +557,8 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                 generation = generation,
                 fastStart = fastStart,
                 protectedTerms = protectedSnapshot,
-                correctObviousTypos = correctionSnapshot
+                correctObviousTypos = correctionSnapshot,
+                language = languageSnapshot
             )
             mainHandler.post {
                 if (
@@ -521,7 +607,8 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
         generation: Long,
         fastStart: Boolean,
         protectedTerms: Set<String>,
-        correctObviousTypos: Boolean
+        correctObviousTypos: Boolean,
+        language: BookLanguage
     ): SpeechChunk? {
         val requestedStart = startPosition.coerceIn(0, text.length)
         var cursor = requestedStart
@@ -539,7 +626,8 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
             val normalized = SpeechTextNormalizer.normalize(
                 raw = text.substring(cursor, end),
                 protectedTerms = protectedTerms,
-                correctObviousTypos = correctObviousTypos
+                correctObviousTypos = correctObviousTypos,
+                language = language
             )
             if (normalized.text.isNotBlank()) {
                 return SpeechChunk(
@@ -746,8 +834,8 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
 
         val statusText = when {
             lastError != null -> lastError
-            isSpeaking -> "${moodSnapshot.mood.label} · $voiceProfileLabel · ${"%.1f".format(speechRate)}×"
-            currentBookId >= 0 -> "En pausa · $voiceProfileLabel"
+            isSpeaking -> "${moodSnapshot.mood.label} · $languageLabel · $voiceProfileLabel · ${"%.1f".format(speechRate)}×"
+            currentBookId >= 0 -> "En pausa · $languageLabel · $voiceProfileLabel"
             else -> "Preparando narración…"
         }
 
@@ -823,6 +911,8 @@ class NarrationService : Service(), TextToSpeech.OnInitListener {
                 .putExtra(EXTRA_AMBIENT_ACTIVE, isSpeaking && ambientVolume > 0f)
                 .putExtra(EXTRA_MOOD, moodSnapshot.mood.name)
                 .putExtra(EXTRA_MOOD_INTENSITY, moodSnapshot.intensity)
+                .putExtra(EXTRA_BOOK_LANGUAGE, currentBookLanguage.name)
+                .putExtra(EXTRA_LANGUAGE_LABEL, languageLabel)
                 .putExtra(EXTRA_VOICE_MODE, currentVoiceMode.name)
                 .putExtra(EXTRA_VOICE_LABEL, voiceProfileLabel)
                 .putExtra(EXTRA_CORRECT_OBVIOUS_TYPOS, spellingCorrectionEnabled)

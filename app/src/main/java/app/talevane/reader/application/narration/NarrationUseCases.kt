@@ -1,5 +1,6 @@
 package app.talevane.reader.application.narration
 
+import app.talevane.reader.language.BookLanguage
 import app.talevane.reader.speech.VoiceMode
 import kotlinx.coroutines.flow.Flow
 
@@ -32,7 +33,13 @@ class SetAmbientVolume(private val gateway: NarrationGateway) {
 }
 
 class SelectVoiceMode(private val gateway: NarrationGateway) {
-    operator fun invoke(bookId: Long, mode: VoiceMode) = gateway.setVoiceMode(bookId, mode)
+    operator fun invoke(bookId: Long, mode: VoiceMode, effectiveLanguage: BookLanguage) =
+        gateway.setVoiceMode(bookId, mode, effectiveLanguage)
+}
+
+class SetBookLanguage(private val gateway: NarrationGateway) {
+    operator fun invoke(bookId: Long, language: BookLanguage) =
+        gateway.setBookLanguage(bookId, language)
 }
 
 class SetSpellingCorrection(private val gateway: NarrationGateway) {
@@ -48,6 +55,7 @@ data class NarrationUseCases(
     val setRate: SetNarrationRate,
     val setAmbientVolume: SetAmbientVolume,
     val selectVoiceMode: SelectVoiceMode,
+    val setBookLanguage: SetBookLanguage,
     val setSpellingCorrection: SetSpellingCorrection
 ) {
     companion object {
@@ -60,6 +68,7 @@ data class NarrationUseCases(
             setRate = SetNarrationRate(gateway),
             setAmbientVolume = SetAmbientVolume(gateway),
             selectVoiceMode = SelectVoiceMode(gateway),
+            setBookLanguage = SetBookLanguage(gateway),
             setSpellingCorrection = SetSpellingCorrection(gateway)
         )
     }

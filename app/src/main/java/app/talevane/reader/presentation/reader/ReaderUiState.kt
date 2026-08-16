@@ -2,6 +2,7 @@ package app.talevane.reader.presentation.reader
 
 import app.talevane.reader.chapters.BookStructure
 import app.talevane.reader.data.BookEntity
+import app.talevane.reader.language.BookLanguage
 import app.talevane.reader.mood.MoodSnapshot
 import app.talevane.reader.mood.ReadingMood
 import app.talevane.reader.reading.ReadingChunk
@@ -21,6 +22,7 @@ data class NarrationUiState(
     val spellingCorrectionEnabled: Boolean = true,
     val mood: ReadingMood? = null,
     val moodIntensity: Float = 0.15f,
+    val languageLabel: String = "Auto · Español",
     val voiceLabel: String = "Auto · sistema"
 )
 
@@ -36,6 +38,7 @@ data class ReaderUiState(
     val speechRate: Float = 1.0f,
     val ambientVolume: Float = 0.45f,
     val spellingCorrectionEnabled: Boolean = true,
+    val bookLanguage: BookLanguage = BookLanguage.AUTO,
     val voiceMode: VoiceMode = VoiceMode.AUTO,
     val localMood: MoodSnapshot? = null
 )

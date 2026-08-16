@@ -19,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import app.talevane.reader.language.BookLanguage
 import app.talevane.reader.ui.BookFlowTheme
 import java.util.Locale
 
@@ -34,6 +35,7 @@ class VoiceLabActivity : ComponentActivity() {
     companion object {
         const val EXTRA_BOOK_ID = "voice_lab_book_id"
         const val EXTRA_MODE = "voice_lab_mode"
+        const val EXTRA_LANGUAGE = "voice_lab_language"
         private const val MAX_MASCULINE_OPTIONS = 4
         private const val MAX_FEMININE_OPTIONS = 2
     }
@@ -44,6 +46,7 @@ class VoiceLabActivity : ComponentActivity() {
     private var error by mutableStateOf<String?>(null)
     private var bookId: Long = -1L
     private var desiredMode: VoiceMode = VoiceMode.MASCULINE
+    private var desiredLanguage: BookLanguage = BookLanguage.SPANISH
     private var selectedVoiceName by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -52,17 +55,30 @@ class VoiceLabActivity : ComponentActivity() {
         desiredMode = intent.getStringExtra(EXTRA_MODE)?.let { raw ->
             runCatching { VoiceMode.valueOf(raw) }.getOrNull()
         } ?: VoiceMode.MASCULINE
+        desiredLanguage = intent.getStringExtra(EXTRA_LANGUAGE)?.let { raw ->
+            runCatching { BookLanguage.valueOf(raw) }.getOrNull()
+        } ?: BookLanguage.SPANISH
 
-        if (bookId < 0 || (desiredMode != VoiceMode.MASCULINE && desiredMode != VoiceMode.FEMININE)) {
+        if (
+            bookId < 0 ||
+            (desiredMode != VoiceMode.MASCULINE && desiredMode != VoiceMode.FEMININE) ||
+            desiredLanguage == BookLanguage.AUTO
+        ) {
             finish()
             return
         }
-        selectedVoiceName = VoicePreferenceStore.selectedVoice(this, bookId, desiredMode)
+        selectedVoiceName = VoicePreferenceStore.selectedVoice(
+            this,
+            bookId,
+            desiredMode,
+            desiredLanguage
+        )
 
         setContent {
             BookFlowTheme {
                 VoiceLabScreen(
                     mode = desiredMode,
+                    language = desiredLanguage,
                     ready = ready,
                     error = error,
                     options = options,
@@ -88,16 +104,12 @@ class VoiceLabActivity : ComponentActivity() {
     private fun loadVoices() {
         val engine = tts ?: return
         val all = engine.voices.orEmpty().distinctBy { it.name }
-        val spanish = all.filter { it.locale.language.equals("es", ignoreCase = true) }
-        val source = if (spanish.isNotEmpty()) {
-            spanish
-        } else {
-            all.filter { it.locale.language == Locale.getDefault().language }
-        }
+        val languageCode = desiredLanguage.languageCode.orEmpty()
+        val source = all.filter { it.locale.language.equals(languageCode, ignoreCase = true) }
 
         if (source.isEmpty()) {
             options.clear()
-            error = "El motor TTS no informó voces compatibles."
+            error = "El motor TTS no informó voces instaladas en ${desiredLanguage.label.lowercase()}."
             ready = true
             return
         }
@@ -163,7 +175,11 @@ class VoiceLabActivity : ComponentActivity() {
         engine.setPitch(1.0f)
         engine.setSpeechRate(0.96f)
         engine.speak(
-            "Esta es una muestra de narración de Talevane. Escucha el timbre y la naturalidad antes de elegir.",
+            if (desiredLanguage == BookLanguage.ENGLISH) {
+                "This is a Talevane narration sample. Listen to the voice and its natural rhythm before choosing."
+            } else {
+                "Esta es una muestra de narración de Talevane. Escucha el timbre y la naturalidad antes de elegir."
+            },
             TextToSpeech.QUEUE_FLUSH,
             null,
             "talevane-voice-preview"
@@ -180,7 +196,13 @@ class VoiceLabActivity : ComponentActivity() {
         if (incompatible || option.needsDownload) return
         tts?.stop()
         selectedVoiceName = option.voice.name
-        NarrationClient.chooseVoice(this, bookId, desiredMode, option.voice.name)
+        NarrationClient.chooseVoice(
+            this,
+            bookId,
+            desiredMode,
+            desiredLanguage,
+            option.voice.name
+        )
         setResult(RESULT_OK)
         finish()
     }
@@ -197,6 +219,7 @@ class VoiceLabActivity : ComponentActivity() {
 @Composable
 private fun VoiceLabScreen(
     mode: VoiceMode,
+    language: BookLanguage,
     ready: Boolean,
     error: String?,
     options: List<VoiceOption>,
@@ -224,7 +247,10 @@ private fun VoiceLabScreen(
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             Column(Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
-                Text("Elige una voz $desiredLabel", style = MaterialTheme.typography.headlineSmall)
+                Text(
+                    "Elige una voz $desiredLabel en ${language.label}",
+                    style = MaterialTheme.typography.headlineSmall
+                )
                 Spacer(Modifier.height(6.dp))
                 Text(
                     "Talevane muestra como máximo $targetCount opciones: evita duplicados, voces sin instalar y prioriza las que arrancan rápido. No usa cambios de pitch para fingir una voz masculina o femenina.",

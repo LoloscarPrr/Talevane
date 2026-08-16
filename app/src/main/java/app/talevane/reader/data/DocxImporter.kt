@@ -2,6 +2,8 @@ package app.talevane.reader.data
 
 import android.content.Context
 import android.net.Uri
+import app.talevane.reader.language.BookLanguage
+import app.talevane.reader.language.BookLanguageDetector
 import org.w3c.dom.Node
 import java.io.File
 import java.util.zip.ZipFile
@@ -20,8 +22,9 @@ internal object DocxImporter {
                     ?: error("Este DOCX no contiene un documento de Word legible.")
                 val document = secureXmlFactory().newDocumentBuilder()
                     .parse(zip.getInputStream(documentEntry))
+                val language = BookLanguageDetector.detect(documentLanguageSample(document))
 
-                val content = extractDocumentBlocks(document)
+                val content = extractDocumentBlocks(document, language)
                     .replace(Regex("[ \t]+\n"), "\n")
                     .replace(Regex("\n{3,}"), "\n\n")
                     .trim()
@@ -68,7 +71,10 @@ internal object DocxImporter {
      * Walks the Word body in document order. Normal paragraphs, table-cell paragraphs and standalone
      * display equations are emitted as Talevane reading blocks.
      */
-    private fun extractDocumentBlocks(document: org.w3c.dom.Document): String {
+    private fun extractDocumentBlocks(
+        document: org.w3c.dom.Document,
+        language: BookLanguage
+    ): String {
         val output = StringBuilder()
         val body = document.getElementsByTagNameNS("*", "body").item(0) ?: document.documentElement
 
@@ -86,13 +92,13 @@ internal object DocxImporter {
             when (node.localName) {
                 "p" -> {
                     val paragraph = StringBuilder()
-                    appendReadableText(node, paragraph)
+                    appendReadableText(node, paragraph, language)
                     appendBlock(paragraph.toString())
                     return
                 }
 
                 "oMathPara" -> {
-                    appendBlock(OmmlMathReader.read(node))
+                    appendBlock(OmmlMathReader.read(node, language))
                     return
                 }
             }
@@ -107,11 +113,15 @@ internal object DocxImporter {
         return output.toString()
     }
 
-    private fun appendReadableText(node: Node, output: StringBuilder) {
+    private fun appendReadableText(
+        node: Node,
+        output: StringBuilder,
+        language: BookLanguage
+    ) {
         when (node.localName) {
             // Native Word equations are interpreted structurally instead of flattening their runs.
             "oMath", "oMathPara" -> {
-                val math = OmmlMathReader.read(node)
+                val math = OmmlMathReader.read(node, language)
                 if (math.isNotBlank()) {
                     if (output.isNotEmpty() && !output.last().isWhitespace()) output.append(' ')
                     output.append(math)
@@ -125,10 +135,23 @@ internal object DocxImporter {
             else -> {
                 val children = node.childNodes
                 for (index in 0 until children.length) {
-                    appendReadableText(children.item(index), output)
+                    appendReadableText(children.item(index), output, language)
                 }
             }
         }
+    }
+
+    private fun documentLanguageSample(document: org.w3c.dom.Document): String {
+        val sample = StringBuilder()
+        val textNodes = document.getElementsByTagNameNS("*", "t")
+        for (index in 0 until textNodes.length) {
+            val text = textNodes.item(index).textContent.orEmpty().trim()
+            if (text.isBlank()) continue
+            if (sample.isNotEmpty()) sample.append(' ')
+            sample.append(text)
+            if (sample.length >= 12_000) break
+        }
+        return sample.toString()
     }
 
     private fun firstText(document: org.w3c.dom.Document, localName: String): String? =

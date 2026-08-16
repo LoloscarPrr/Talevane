@@ -24,6 +24,7 @@ import app.talevane.reader.application.library.BookLibrary
 import app.talevane.reader.chapters.BookChapter
 import app.talevane.reader.chapters.BookStructure
 import app.talevane.reader.library.BookPresenter
+import app.talevane.reader.language.BookLanguage
 import app.talevane.reader.presentation.reader.ReaderViewModel
 import app.talevane.reader.presentation.reader.ReaderViewModelFactory
 import app.talevane.reader.reading.CanonicalTextNavigation
@@ -60,6 +61,7 @@ internal fun ReaderScreen(repository: BookLibrary, bookId: Long, back: () -> Uni
     var restored by remember(bookId) { mutableStateOf(false) }
     var showChapters by rememberSaveable { mutableStateOf(false) }
     var showVoiceMenu by rememberSaveable { mutableStateOf(false) }
+    var showLanguageMenu by rememberSaveable { mutableStateOf(false) }
     var showReaderSettings by rememberSaveable { mutableStateOf(false) }
     var showPagePicker by rememberSaveable { mutableStateOf(false) }
     var selectedStartPosition by remember(bookId) { mutableStateOf<Int?>(null) }
@@ -158,6 +160,7 @@ internal fun ReaderScreen(repository: BookLibrary, bookId: Long, back: () -> Uni
     val percentLabel = (readingPercent * 100).roundToInt()
     val currentChapter = chapters.lastOrNull { it.start <= activePosition }
     val moodSnapshot = readerViewModel.moodSnapshot(state)
+    val languageLabel = readerViewModel.languageLabel(state)
     val voiceLabel = readerViewModel.voiceLabel(display.author, state)
 
     fun positionFromScroll(): Int {
@@ -256,6 +259,35 @@ internal fun ReaderScreen(repository: BookLibrary, bookId: Long, back: () -> Uni
                     Text("${"%.1f".format(state.speechRate)}×", style = MaterialTheme.typography.labelLarge)
                     IconButton(onClick = { readerViewModel.adjustSpeechRate(0.1f) }) {
                         Icon(Icons.Default.Add, "Más rápido")
+                    }
+                }
+
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Idioma del libro", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                    Box {
+                        OutlinedButton(onClick = { showLanguageMenu = true }) {
+                            Icon(Icons.Default.Language, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(languageLabel, maxLines = 1)
+                        }
+                        DropdownMenu(
+                            expanded = showLanguageMenu,
+                            onDismissRequest = { showLanguageMenu = false }
+                        ) {
+                            BookLanguage.entries.forEach { language ->
+                                DropdownMenuItem(
+                                    text = { Text(language.label) },
+                                    leadingIcon = {
+                                        if (language == state.bookLanguage) Icon(Icons.Default.Check, null)
+                                        else Icon(Icons.Default.Language, null)
+                                    },
+                                    onClick = {
+                                        readerViewModel.setBookLanguage(language)
+                                        showLanguageMenu = false
+                                    }
+                                )
+                            }
+                        }
                     }
                 }
 

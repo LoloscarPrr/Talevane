@@ -1,5 +1,6 @@
 package app.talevane.reader.speech
 
+import app.talevane.reader.language.BookLanguage
 import java.util.Locale
 
 internal data class NormalizedSpeechText(
@@ -100,7 +101,8 @@ internal object SpeechTextNormalizer {
     fun normalize(
         raw: String,
         protectedTerms: Set<String>,
-        correctObviousTypos: Boolean
+        correctObviousTypos: Boolean,
+        language: BookLanguage = BookLanguage.SPANISH
     ): NormalizedSpeechText {
         if (raw.isEmpty()) return NormalizedSpeechText("", intArrayOf(0))
 
@@ -133,7 +135,9 @@ internal object SpeechTextNormalizer {
         }
         val speechBase = String(chars)
 
-        if (!correctObviousTypos) {
+        // The current typo/OCR rules are deliberately Spanish-only. Applying them to an English
+        // book could turn a damaged English "o" into the Spanish character "ó".
+        if (!correctObviousTypos || language == BookLanguage.ENGLISH) {
             return NormalizedSpeechText(speechBase, IntArray(speechBase.length + 1) { it })
         }
 

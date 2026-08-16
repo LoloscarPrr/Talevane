@@ -11,6 +11,8 @@ import app.talevane.reader.application.narration.NarrationUseCases
 import app.talevane.reader.application.reader.PrepareReadingResult
 import app.talevane.reader.application.reader.ReaderUseCases
 import app.talevane.reader.library.BookPresenter
+import app.talevane.reader.language.BookLanguage
+import app.talevane.reader.language.BookLanguageDetector
 import app.talevane.reader.mood.MoodEngine
 import app.talevane.reader.mood.MoodSnapshot
 import app.talevane.reader.mood.ReadingMood
@@ -32,6 +34,7 @@ class ReaderViewModel(
     private val _state = MutableStateFlow(
         ReaderUiState(
             spellingCorrectionEnabled = initialNarrationPreferences.spellingCorrectionEnabled,
+            bookLanguage = initialNarrationPreferences.bookLanguage,
             voiceMode = initialNarrationPreferences.voiceMode
         )
     )
@@ -86,6 +89,7 @@ class ReaderViewModel(
                 book = loaded,
                 loadError = null,
                 manualPosition = resumePosition,
+                bookLanguage = preferences.bookLanguage,
                 voiceMode = preferences.voiceMode,
                 spellingCorrectionEnabled = preferences.spellingCorrectionEnabled,
                 localMood = mood,
@@ -141,6 +145,7 @@ class ReaderViewModel(
             spellingCorrectionEnabled = state.spellingCorrectionEnabled,
             mood = state.mood,
             moodIntensity = state.moodIntensity,
+            languageLabel = state.languageLabel,
             voiceLabel = state.voiceLabel
         )
 
@@ -157,6 +162,11 @@ class ReaderViewModel(
             speechRate = if (belongsToCurrentBook) state.rate else current.speechRate,
             ambientVolume = state.ambientVolume,
             spellingCorrectionEnabled = state.spellingCorrectionEnabled,
+            bookLanguage = if (belongsToCurrentBook) {
+                state.bookLanguage ?: current.bookLanguage
+            } else {
+                current.bookLanguage
+            },
             voiceMode = if (belongsToCurrentBook) state.voiceMode ?: current.voiceMode else current.voiceMode
         )
     }
@@ -204,6 +214,12 @@ class ReaderViewModel(
             VoiceMode.FEMININE -> "Femenina · elegir"
             VoiceMode.SYSTEM -> "Sistema"
         }
+    }
+
+    fun languageLabel(state: ReaderUiState = _state.value): String {
+        if (isActiveBook(state)) return state.narration.languageLabel
+        val content = state.book?.content.orEmpty()
+        return BookLanguageDetector.resolve(state.bookLanguage, content).label
     }
 
     fun setManualPosition(position: Int, persist: Boolean) {
@@ -266,7 +282,16 @@ class ReaderViewModel(
     fun setVoiceMode(mode: VoiceMode) {
         val book = _state.value.book ?: return
         _state.value = _state.value.copy(voiceMode = mode)
-        narrationUseCases.selectVoiceMode(book.id, mode)
+        val effectiveLanguage = BookLanguageDetector
+            .resolve(_state.value.bookLanguage, book.content)
+            .effective
+        narrationUseCases.selectVoiceMode(book.id, mode, effectiveLanguage)
+    }
+
+    fun setBookLanguage(language: BookLanguage) {
+        val book = _state.value.book ?: return
+        _state.value = _state.value.copy(bookLanguage = language)
+        narrationUseCases.setBookLanguage(book.id, language)
     }
 
     fun previewAmbientVolume(volume: Float) {

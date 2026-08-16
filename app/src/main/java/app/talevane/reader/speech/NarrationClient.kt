@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
+import app.talevane.reader.language.BookLanguage
 
 object NarrationClient {
     fun start(context: Context, bookId: Long, position: Int, rate: Float) {
@@ -27,13 +28,20 @@ object NarrationClient {
         context.startService(Intent(context, NarrationService::class.java).setAction(NarrationService.ACTION_SET_AMBIENT_VOLUME).putExtra(NarrationService.EXTRA_AMBIENT_VOLUME, volume.coerceIn(0f, 1f)))
     }
 
-    fun setVoiceMode(context: Context, bookId: Long, mode: VoiceMode) {
+    fun setVoiceMode(
+        context: Context,
+        bookId: Long,
+        mode: VoiceMode,
+        effectiveLanguage: BookLanguage
+    ) {
+        require(effectiveLanguage != BookLanguage.AUTO)
         VoicePreferenceStore.set(context, bookId, mode)
         if (mode == VoiceMode.MASCULINE || mode == VoiceMode.FEMININE) {
             runCatching { pause(context) }
             val lab = Intent(context, VoiceLabActivity::class.java)
                 .putExtra(VoiceLabActivity.EXTRA_BOOK_ID, bookId)
                 .putExtra(VoiceLabActivity.EXTRA_MODE, mode.name)
+                .putExtra(VoiceLabActivity.EXTRA_LANGUAGE, effectiveLanguage.name)
             if (context !is Activity) lab.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(lab)
             return
@@ -41,9 +49,25 @@ object NarrationClient {
         sendVoiceMode(context, bookId, mode)
     }
 
-    fun chooseVoice(context: Context, bookId: Long, mode: VoiceMode, voiceName: String) {
-        VoicePreferenceStore.setVoice(context, bookId, mode, voiceName)
+    fun chooseVoice(
+        context: Context,
+        bookId: Long,
+        mode: VoiceMode,
+        language: BookLanguage,
+        voiceName: String
+    ) {
+        VoicePreferenceStore.setVoice(context, bookId, mode, language, voiceName)
         sendVoiceMode(context, bookId, mode)
+    }
+
+    fun setBookLanguage(context: Context, bookId: Long, language: BookLanguage) {
+        BookLanguagePreferenceStore.set(context, bookId, language)
+        context.startService(
+            Intent(context, NarrationService::class.java)
+                .setAction(NarrationService.ACTION_SET_BOOK_LANGUAGE)
+                .putExtra(NarrationService.EXTRA_BOOK_ID, bookId)
+                .putExtra(NarrationService.EXTRA_BOOK_LANGUAGE, language.name)
+        )
     }
 
     private fun sendVoiceMode(context: Context, bookId: Long, mode: VoiceMode) {

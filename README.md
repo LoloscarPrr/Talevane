@@ -1,4 +1,11 @@
-# Talevane v0.7.8
+# Talevane v0.7.9
+
+## v0.7.9 — Spanish and English narration
+- Detects Spanish or English locally from each book and selects the matching Android TTS language.
+- Adds a per-book language control with Automatic, Spanish and English options.
+- Keeps separate voice choices for Spanish and English, including the Voice Lab filters and previews.
+- Word equations imported from English DOCX files are converted into English mathematical speech.
+- Spanish-only spelling/OCR corrections no longer alter English narration.
 
 ## v0.7.8 — Word compatibility on older phones
 - DOCX files remain selectable when an older Android/Huawei file manager labels them as

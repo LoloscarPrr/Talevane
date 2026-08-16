@@ -1,6 +1,7 @@
 package app.talevane.reader.application.narration
 
 import app.talevane.reader.mood.ReadingMood
+import app.talevane.reader.language.BookLanguage
 import app.talevane.reader.speech.VoiceMode
 import kotlinx.coroutines.flow.Flow
 
@@ -18,13 +19,16 @@ data class NarrationState(
     val spellingCorrectionEnabled: Boolean = true,
     val mood: ReadingMood? = null,
     val moodIntensity: Float = 0.15f,
+    val bookLanguage: BookLanguage? = null,
+    val languageLabel: String = "Auto · Español",
     val voiceLabel: String = "Auto · sistema",
     val voiceMode: VoiceMode? = null
 )
 
 data class NarrationPreferences(
     val spellingCorrectionEnabled: Boolean,
-    val voiceMode: VoiceMode
+    val voiceMode: VoiceMode,
+    val bookLanguage: BookLanguage
 )
 
 interface NarrationGateway {
@@ -36,6 +40,7 @@ interface NarrationGateway {
     fun stop()
     fun setRate(rate: Float)
     fun setAmbientVolume(volume: Float)
-    fun setVoiceMode(bookId: Long, mode: VoiceMode)
+    fun setVoiceMode(bookId: Long, mode: VoiceMode, effectiveLanguage: BookLanguage)
+    fun setBookLanguage(bookId: Long, language: BookLanguage)
     fun setSpellingCorrection(enabled: Boolean)
 }

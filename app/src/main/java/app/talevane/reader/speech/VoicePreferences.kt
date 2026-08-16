@@ -3,6 +3,7 @@ package app.talevane.reader.speech
 import android.content.Context
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
+import app.talevane.reader.language.BookLanguage
 import java.text.Normalizer
 
 enum class VoiceMode(val label: String, val shortLabel: String) {
@@ -16,7 +17,9 @@ object VoicePreferenceStore {
     private const val PREFS = "talevane_voice_preferences"
 
     private fun modeKey(bookId: Long) = "book_${bookId}_mode"
-    private fun voiceKey(bookId: Long, mode: VoiceMode) = "book_${bookId}_voice_${mode.name}"
+    private fun legacyVoiceKey(bookId: Long, mode: VoiceMode) = "book_${bookId}_voice_${mode.name}"
+    private fun voiceKey(bookId: Long, mode: VoiceMode, language: BookLanguage) =
+        "book_${bookId}_voice_${mode.name}_${language.name}"
 
     fun get(context: Context, bookId: Long): VoiceMode {
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -32,19 +35,37 @@ object VoicePreferenceStore {
             .apply()
     }
 
-    fun setVoice(context: Context, bookId: Long, mode: VoiceMode, voiceName: String) {
+    fun setVoice(
+        context: Context,
+        bookId: Long,
+        mode: VoiceMode,
+        language: BookLanguage,
+        voiceName: String
+    ) {
         require(mode == VoiceMode.MASCULINE || mode == VoiceMode.FEMININE)
+        require(language == BookLanguage.SPANISH || language == BookLanguage.ENGLISH)
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
             .putString(modeKey(bookId), mode.name)
-            .putString(voiceKey(bookId, mode), voiceName)
+            .putString(voiceKey(bookId, mode, language), voiceName)
             .apply()
     }
 
-    fun selectedVoice(context: Context, bookId: Long, mode: VoiceMode): String? {
+    fun selectedVoice(
+        context: Context,
+        bookId: Long,
+        mode: VoiceMode,
+        language: BookLanguage
+    ): String? {
         if (mode != VoiceMode.MASCULINE && mode != VoiceMode.FEMININE) return null
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(voiceKey(bookId, mode), null)
+        val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        return preferences.getString(voiceKey(bookId, mode, language), null)
+            // Preserve Spanish choices made before language-per-book support existed.
+            ?: if (language == BookLanguage.SPANISH) {
+                preferences.getString(legacyVoiceKey(bookId, mode), null)
+            } else {
+                null
+            }
     }
 }
 
@@ -97,14 +118,19 @@ object AuthorVoiceProfile {
         defaultVoice: Voice?,
         requested: VoiceMode,
         author: String,
-        bookId: Long
+        bookId: Long,
+        language: BookLanguage
     ): VoiceProfileResult {
         val effective = if (requested == VoiceMode.AUTO) infer(author) else requested
         engine.setPitch(1.0f)
 
         if (effective == VoiceMode.MASCULINE || effective == VoiceMode.FEMININE) {
-            val savedName = VoicePreferenceStore.selectedVoice(context, bookId, effective)
-            val savedVoice = savedName?.let { name -> engine.voices?.firstOrNull { it.name == name } }
+            val savedName = VoicePreferenceStore.selectedVoice(context, bookId, effective, language)
+            val savedVoice = savedName?.let { name ->
+                engine.voices?.firstOrNull {
+                    it.name == name && it.locale.language.equals(language.languageCode, ignoreCase = true)
+                }
+            }
             if (savedVoice != null && applyConcreteVoice(engine, savedVoice)) {
                 val base = if (effective == VoiceMode.MASCULINE) "masculina" else "femenina"
                 val label = if (requested == VoiceMode.AUTO) "Auto · $base elegida" else "${base.replaceFirstChar { it.uppercase() }} · elegida"
@@ -114,7 +140,7 @@ object AuthorVoiceProfile {
             // Automatic gender selection is conservative: Talevane only auto-picks a voice when
             // Android exposes an explicit matching gender marker. Unknown voices must be auditioned
             // and chosen by the user instead of being faked with pitch changes.
-            val recommended = selectRecommendedVoice(engine, effective)
+            val recommended = selectRecommendedVoice(engine, effective, language)
             if (recommended != null && applyConcreteVoice(engine, recommended)) {
                 val base = if (effective == VoiceMode.MASCULINE) "masculina" else "femenina"
                 val label = if (requested == VoiceMode.AUTO) "Auto · $base verificada" else "${base.replaceFirstChar { it.uppercase() }} · verificada"
@@ -148,11 +174,18 @@ object AuthorVoiceProfile {
         return engine.setVoice(voice) == TextToSpeech.SUCCESS
     }
 
-    private fun selectRecommendedVoice(engine: TextToSpeech, target: VoiceMode): Voice? {
-        val currentLanguage = engine.voice?.locale?.language
+    private fun selectRecommendedVoice(
+        engine: TextToSpeech,
+        target: VoiceMode,
+        language: BookLanguage
+    ): Voice? {
+        val languageCode = language.languageCode
         return engine.voices
             ?.asSequence()
-            ?.filter { currentLanguage == null || it.locale.language == currentLanguage }
+            ?.filter { languageCode == null || it.locale.language.equals(languageCode, ignoreCase = true) }
+            ?.filter {
+                !it.features.orEmpty().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)
+            }
             ?.filter { detectedGender(it) == target }
             ?.map { it to VoiceQualityHeuristics.assess(it, target) }
             ?.filter { (_, assessment) -> assessment.recommended }

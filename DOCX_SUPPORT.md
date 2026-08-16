@@ -1,6 +1,6 @@
 # DOCX support
 
-Talevane v0.7.8 adds compatibility for older Android file managers on top of the native
+Talevane v0.7.9 includes compatibility for older Android file managers on top of the native
 `.docx` importer introduced in v0.7.7.
 
 - Reads `word/document.xml` directly from the Office Open XML package.
@@ -11,6 +11,8 @@ Talevane v0.7.8 adds compatibility for older Android file managers on top of the
 - Accepts the legacy `application/msword`, ZIP and generic-binary labels used incorrectly for
   `.docx` by some older file managers, then validates the OOXML package before importing it.
 - Accepts Word files through both Android “Open with…” and “Share”.
+- Detects whether the document is Spanish or English and converts supported Word equations into
+  mathematical speech in that language.
 
 Legacy binary `.doc` files are detected and receive a clear explanation; they are not parsed in
 this version and should be saved as `.docx` first.

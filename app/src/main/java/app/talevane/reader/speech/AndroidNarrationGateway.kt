@@ -8,6 +8,7 @@ import androidx.core.content.ContextCompat
 import app.talevane.reader.application.narration.NarrationGateway
 import app.talevane.reader.application.narration.NarrationPreferences
 import app.talevane.reader.application.narration.NarrationState
+import app.talevane.reader.language.BookLanguage
 import app.talevane.reader.mood.ReadingMood
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -39,7 +40,8 @@ class AndroidNarrationGateway(context: Context) : NarrationGateway {
 
     override fun preferences(bookId: Long): NarrationPreferences = NarrationPreferences(
         spellingCorrectionEnabled = SpeechCorrectionPreference.get(appContext),
-        voiceMode = VoicePreferenceStore.get(appContext, bookId)
+        voiceMode = VoicePreferenceStore.get(appContext, bookId),
+        bookLanguage = BookLanguagePreferenceStore.get(appContext, bookId)
     )
 
     override fun start(bookId: Long, position: Int, rate: Float) {
@@ -62,8 +64,12 @@ class AndroidNarrationGateway(context: Context) : NarrationGateway {
         NarrationClient.setAmbientVolume(appContext, volume)
     }
 
-    override fun setVoiceMode(bookId: Long, mode: VoiceMode) {
-        NarrationClient.setVoiceMode(appContext, bookId, mode)
+    override fun setVoiceMode(bookId: Long, mode: VoiceMode, effectiveLanguage: BookLanguage) {
+        NarrationClient.setVoiceMode(appContext, bookId, mode, effectiveLanguage)
+    }
+
+    override fun setBookLanguage(bookId: Long, language: BookLanguage) {
+        NarrationClient.setBookLanguage(appContext, bookId, language)
     }
 
     override fun setSpellingCorrection(enabled: Boolean) {
@@ -76,6 +82,9 @@ class AndroidNarrationGateway(context: Context) : NarrationGateway {
         }
         val voiceMode = getStringExtra(NarrationService.EXTRA_VOICE_MODE)?.let { raw ->
             runCatching { VoiceMode.valueOf(raw) }.getOrNull()
+        }
+        val bookLanguage = getStringExtra(NarrationService.EXTRA_BOOK_LANGUAGE)?.let { raw ->
+            runCatching { BookLanguage.valueOf(raw) }.getOrNull()
         }
 
         return NarrationState(
@@ -92,6 +101,8 @@ class AndroidNarrationGateway(context: Context) : NarrationGateway {
             spellingCorrectionEnabled = getBooleanExtra(NarrationService.EXTRA_CORRECT_OBVIOUS_TYPOS, true),
             mood = mood,
             moodIntensity = getFloatExtra(NarrationService.EXTRA_MOOD_INTENSITY, 0.15f),
+            bookLanguage = bookLanguage,
+            languageLabel = getStringExtra(NarrationService.EXTRA_LANGUAGE_LABEL) ?: "Auto · Español",
             voiceLabel = getStringExtra(NarrationService.EXTRA_VOICE_LABEL) ?: "Auto · sistema",
             voiceMode = voiceMode
         )
