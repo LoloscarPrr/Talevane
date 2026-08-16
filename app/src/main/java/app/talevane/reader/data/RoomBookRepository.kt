@@ -17,7 +17,7 @@ class RoomBookRepository(
     private var recentImportedBook: BookEntity? = null
 
     override suspend fun import(uri: Uri): Long = withContext(Dispatchers.IO) {
-        val imported = Importers.import(context, uri)
+        val imported = BookFileImporter.import(context, uri)
         val pending = BookEntity(
             title = imported.title,
             author = imported.author,
