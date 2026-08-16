@@ -48,8 +48,8 @@ jobs:
         with:
           gradle-version: "8.11.1"
 
-      - name: Build debug APK
-        run: gradle :app:assembleDebug
+      - name: Test and build debug APK
+        run: gradle :app:testDebugUnitTest :app:assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

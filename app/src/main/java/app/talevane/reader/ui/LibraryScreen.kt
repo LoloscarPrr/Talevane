@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.sp
 import app.talevane.reader.R
 import app.talevane.reader.data.BookEntity
 import app.talevane.reader.data.BookRepository
+import app.talevane.reader.data.SupportedBookFiles
 import app.talevane.reader.library.BookPresenter
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -60,14 +61,7 @@ internal fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit)
     }
 
     val addBook = {
-        picker.launch(
-            arrayOf(
-                "text/plain",
-                "application/pdf",
-                "application/epub+zip",
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            )
-        )
+        picker.launch(SupportedBookFiles.pickerMimeTypes)
     }
 
     if (importing) {

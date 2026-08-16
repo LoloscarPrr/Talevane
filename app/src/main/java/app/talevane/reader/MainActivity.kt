@@ -44,7 +44,20 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIncomingBook(intent: Intent?) {
-        if (intent?.action != Intent.ACTION_VIEW) return
-        incomingBookUri = intent.data
+        incomingBookUri = when (intent?.action) {
+            Intent.ACTION_VIEW -> intent.data
+            Intent.ACTION_SEND -> sharedStreamUri(intent)
+            else -> null
+        }
     }
+
+    @Suppress("DEPRECATION")
+    private fun sharedStreamUri(intent: Intent): Uri? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                ?: intent.clipData?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.uri
+        } else {
+            intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+                ?: intent.clipData?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.uri
+        }
 }

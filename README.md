@@ -1,4 +1,15 @@
-# Talevane v0.6.7
+# Talevane v0.7.8
+
+## v0.7.8 — Word compatibility on older phones
+- DOCX files remain selectable when an older Android/Huawei file manager labels them as
+  `application/msword`, `application/zip` or `application/octet-stream`.
+- Talevane validates the internal Word package instead of trusting the file manager's label.
+- DOCX can be sent to Talevane through both “Open with…” and “Share”.
+- Actual legacy `.doc` files now receive a specific explanation instead of a generic format error.
+
+## v0.7.7 — DOCX and Word equations
+- Native offline `.docx` import.
+- Common Word equations are converted into narration-friendly mathematical speech.
 
 ## v0.6.7 — Guided Reading
 - Tapping text now resolves to the beginning of the word actually touched instead of jumping back to the previous sentence boundary.
