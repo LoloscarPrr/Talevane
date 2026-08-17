@@ -3,6 +3,7 @@ package app.talevane.reader.data
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.RectF
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
@@ -12,7 +13,11 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.text.PDFTextStripper
+import com.tom_roush.pdfbox.text.PDFTextStripperByArea
+import app.talevane.reader.reading.DOCUMENT_PAGE_BREAK
+import app.talevane.reader.reading.DOCUMENT_PAGE_SEPARATOR
 import java.io.File
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipFile
@@ -52,9 +57,7 @@ object Importers {
                 tmp.outputStream().use { output -> input.copyTo(output) }
             }
 
-            val extracted = PDDocument.load(tmp).use { doc ->
-                PDFTextStripper().getText(doc).trim()
-            }
+            val extracted = PDDocument.load(tmp).use(::extractPdfText)
 
             val usedOcr = !looksLikeReadableBookText(extracted)
             val text = if (usedOcr) {
@@ -77,6 +80,70 @@ object Importers {
             tmp.delete()
         }
     }
+
+    /**
+     * Keeps source PDF pages intact so the reader page counter matches the document instead of
+     * splitting one large text stream every few thousand characters. Position sorting also avoids
+     * the content-stream order seen in complex layouts, where every "CAPÍTULO" was emitted before
+     * its number and title.
+     */
+    private fun extractPdfText(document: PDDocument): String {
+        val pageStripper = PDFTextStripper().apply {
+            setSortByPosition(true)
+            setShouldSeparateByBeads(false)
+            setPageEnd(DOCUMENT_PAGE_SEPARATOR)
+        }
+        val rawPages = pageStripper.getText(document).split(DOCUMENT_PAGE_BREAK)
+
+        return (0 until document.numberOfPages)
+            .map { pageIndex ->
+                val sortedText = cleanExtractedPage(rawPages.getOrElse(pageIndex) { "" })
+                if (looksLikeTwoColumnContents(sortedText)) {
+                    extractTwoColumnPage(document.getPage(pageIndex))
+                } else {
+                    sortedText
+                }
+            }
+            .joinToString(DOCUMENT_PAGE_SEPARATOR)
+    }
+
+    private fun extractTwoColumnPage(page: PDPage): String {
+        val box = page.cropBox
+        val halfWidth = box.width / 2f
+        val stripper = PDFTextStripperByArea().apply {
+            setSortByPosition(true)
+            addRegion("left", RectF(0f, 0f, halfWidth, box.height))
+            addRegion("right", RectF(halfWidth, 0f, box.width, box.height))
+        }
+        stripper.extractRegions(page)
+
+        return listOf("left", "right")
+            .map { region -> cleanExtractedPage(stripper.getTextForRegion(region)) }
+            .filter(String::isNotBlank)
+            .joinToString("\n\n")
+    }
+
+    internal fun looksLikeTwoColumnContents(text: String): Boolean {
+        val hasContentsHeading = Regex(
+            pattern = """(?im)^\s*(índice|indice|contents|table of contents)\s*$"""
+        ).containsMatchIn(text)
+        if (!hasContentsHeading) return false
+
+        val sectionMarkers = Regex(
+            pattern = """(?i)\b(cap[ií]tulo|chapter|anexos?|appendix)\b"""
+        ).findAll(text).count()
+        val pageNumbers = Regex(pattern = """(?m)(^|\s)\d{1,3}(?=\s|$)""")
+            .findAll(text)
+            .count()
+
+        return sectionMarkers >= 3 && pageNumbers >= 5
+    }
+
+    private fun cleanExtractedPage(text: String): String = text
+        .lineSequence()
+        .joinToString("\n") { line -> line.trimEnd() }
+        .replace(Regex("\n{3,}"), "\n\n")
+        .trim()
 
     /**
      * Detects the common PDF failure where embedded fonts have no useful Unicode map and a text
@@ -139,10 +206,8 @@ object Importers {
                         .text
                         .trim()
 
-                    if (recognized.isNotBlank()) {
-                        if (out.isNotEmpty()) out.append("\n\n")
-                        out.append(recognized)
-                    }
+                    if (index > 0) out.append(DOCUMENT_PAGE_SEPARATOR)
+                    if (recognized.isNotBlank()) out.append(recognized)
                 } finally {
                     bitmap?.recycle()
                     page.close()

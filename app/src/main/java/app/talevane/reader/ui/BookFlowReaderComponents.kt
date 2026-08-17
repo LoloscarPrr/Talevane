@@ -12,6 +12,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
@@ -21,6 +22,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.talevane.reader.reading.ReadingChunk
+import kotlin.math.roundToInt
 
 @Composable
 internal fun BookFlowPage(
@@ -35,6 +37,7 @@ internal fun BookFlowPage(
 ) {
     var layout by remember(chunk.start, chunk.end, fontSizeSp) { mutableStateOf<TextLayoutResult?>(null) }
     val scroll = rememberScrollState()
+    var viewportHeightPx by remember(chunk.start, chunk.end) { mutableIntStateOf(0) }
     val rendered = buildAnnotatedString {
         append(chunk.text)
 
@@ -67,6 +70,32 @@ internal fun BookFlowPage(
                     localEnd
                 )
             }
+        }
+    }
+
+    LaunchedEffect(chunk.start, chunk.end) {
+        scroll.scrollTo(0)
+    }
+
+    LaunchedEffect(highlightStart, highlightEnd, layout, viewportHeightPx) {
+        val result = layout ?: return@LaunchedEffect
+        if (viewportHeightPx <= 0 || highlightStart !in chunk.start until chunk.end) {
+            return@LaunchedEffect
+        }
+
+        val localOffset = (highlightStart - chunk.start).coerceIn(0, chunk.text.lastIndex)
+        val line = result.getLineForOffset(localOffset)
+        val lineTop = result.getLineTop(line)
+        val lineBottom = result.getLineBottom(line)
+        val visibleTop = scroll.value.toFloat()
+        val visibleBottom = visibleTop + viewportHeightPx
+        val margin = (lineBottom - lineTop).coerceAtLeast(1f)
+
+        if (lineTop < visibleTop + margin || lineBottom > visibleBottom - margin) {
+            val target = (lineTop - viewportHeightPx * 0.18f)
+                .roundToInt()
+                .coerceIn(0, scroll.maxValue)
+            scroll.animateScrollTo(target)
         }
     }
 
@@ -114,6 +143,7 @@ internal fun BookFlowPage(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
+                        .onSizeChanged { viewportHeightPx = it.height }
                         .verticalScroll(scroll)
                 ) {
                     Text(
