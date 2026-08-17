@@ -51,9 +51,8 @@ class AmbientSoundEngine(context: Context) {
         if (shouldPlay) handler.post {
             if (activateOrchestralPack()) {
                 orchestralSound.start(targetMood, targetIntensity, targetVolume)
-            } else {
-                transitionTo(targetMood)
             }
+            transitionTo(targetMood)
         }
     }
 
@@ -66,9 +65,8 @@ class AmbientSoundEngine(context: Context) {
         handler.post {
             if (activateOrchestralPack()) {
                 orchestralSound.start(targetMood, targetIntensity, targetVolume)
-            } else {
-                transitionTo(targetMood)
             }
+            transitionTo(targetMood)
         }
     }
 
@@ -79,9 +77,8 @@ class AmbientSoundEngine(context: Context) {
         if (shouldPlay) handler.post {
             if (activateOrchestralPack()) {
                 orchestralSound.setMood(targetMood, targetIntensity)
-            } else {
-                transitionTo(targetMood)
             }
+            transitionTo(targetMood)
         }
     }
 
@@ -90,7 +87,7 @@ class AmbientSoundEngine(context: Context) {
         targetVolume = volume.coerceIn(0f, 1f)
         handler.post {
             orchestralSound.setVolume(targetVolume)
-            if (!usingOrchestralPack) applyCurrentGain()
+            applyCurrentGain()
         }
     }
 
@@ -111,7 +108,6 @@ class AmbientSoundEngine(context: Context) {
         handler.post {
             if (activateOrchestralPack()) {
                 orchestralSound.start(targetMood, targetIntensity, targetVolume)
-                return@post
             }
             val player = activePlayer
             val expectedKey = playbackKey(targetMood)
@@ -149,20 +145,12 @@ class AmbientSoundEngine(context: Context) {
             usingOrchestralPack = false
             return false
         }
-        if (!usingOrchestralPack) {
-            fadeGeneration++
-            releasePlayer(fadingPlayer)
-            releasePlayer(activePlayer)
-            fadingPlayer = null
-            activePlayer = null
-            activeKey = null
-            usingOrchestralPack = true
-        }
+        usingOrchestralPack = true
         return true
     }
 
     private fun transitionTo(mood: ReadingMood) {
-        if (released || !shouldPlay || usingOrchestralPack) return
+        if (released || !shouldPlay) return
         val nextKey = playbackKey(mood)
         if (activeKey == nextKey && activePlayer != null) {
             applyCurrentGain()
