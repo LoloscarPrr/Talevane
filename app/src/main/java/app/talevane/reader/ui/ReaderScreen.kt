@@ -1,5 +1,6 @@
 package app.talevane.reader.ui
 
+import android.content.Intent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -21,6 +22,7 @@ import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.talevane.reader.application.library.BookLibrary
+import app.talevane.reader.audio.OrchestralPackActivity
 import app.talevane.reader.chapters.BookChapter
 import app.talevane.reader.chapters.BookStructure
 import app.talevane.reader.library.BookPresenter
@@ -329,6 +331,20 @@ internal fun ReaderScreen(repository: BookLibrary, bookId: Long, back: () -> Uni
                         modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
                     )
                     Text("${(state.ambientVolume * 100).roundToInt()}%", style = MaterialTheme.typography.labelMedium)
+                }
+
+                OutlinedButton(
+                    onClick = {
+                        appContext.startActivity(
+                            Intent(appContext, OrchestralPackActivity::class.java)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.LibraryMusic, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(7.dp))
+                    Text("Descargar o gestionar pack orquestal")
                 }
 
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
