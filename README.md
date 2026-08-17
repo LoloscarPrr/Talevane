@@ -1,4 +1,13 @@
-# Talevane v0.7.10
+# Talevane v0.7.11
+
+## v0.7.11 — Downloadable voices and real orchestra
+- Voice Lab now opens the active Android TTS engine's official voice downloader and keeps
+  downloadable Spanish/English voices visible instead of silently discarding them.
+- Adds an optional 34 MB VSCO 2 CE orchestral pack with real recordings of strings, woodwinds,
+  brass, keys and percussion under the CC0 license.
+- The pack downloads once, is verified before extraction and works offline afterwards.
+- The mood score layers real samples for calm, reflection, melancholy, mystery, tension, action
+  and warmth; the existing procedural MIDI score remains available as a lightweight fallback.
 
 ## v0.7.10 — Real PDF pages and layout-aware reading
 - Preserves source PDF page boundaries, so a 170-page PDF opens as 170 reader pages instead of hundreds of arbitrary text chunks.
@@ -81,7 +90,7 @@ Offline-first Android book reader evolving into an immersive listening experienc
 - Lock-screen and notification media controls
 - Chapter / section navigation
 - Mood Engine based on nearby reading context
-- Adaptive procedural piano with independent volume
+- Adaptive orchestral score with optional sample pack, MIDI fallback and independent volume
 - Voice Lab with per-book narration voice choice
 - Talevane icon and Material 3 dark UI
 

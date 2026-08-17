@@ -1,5 +1,6 @@
 package app.talevane.reader.speech
 
+import android.content.Intent
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
@@ -11,6 +12,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
@@ -86,6 +88,7 @@ class VoiceLabActivity : ComponentActivity() {
                     onBack = { finish() },
                     onPreview = ::preview,
                     onSelect = ::selectVoice,
+                    onInstallVoices = ::installVoiceData,
                     onReload = ::loadVoices
                 )
             }
@@ -130,7 +133,6 @@ class VoiceLabActivity : ComponentActivity() {
                     needsDownload = voice.features.orEmpty().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)
                 )
             }
-            .filter { candidate -> !candidate.needsDownload }
             .filter { candidate -> candidate.detected == null || candidate.detected == desiredMode }
             .sortedWith(
                 compareByDescending<Candidate> { it.detected == desiredMode }
@@ -142,8 +144,12 @@ class VoiceLabActivity : ComponentActivity() {
             .distinctBy { candidate -> voiceFamily(candidate.voice.name) }
 
         val limit = if (desiredMode == VoiceMode.MASCULINE) MAX_MASCULINE_OPTIONS else MAX_FEMININE_OPTIONS
+        val visible = (
+            ranked.filterNot { it.needsDownload }.take(limit) +
+                ranked.filter { it.needsDownload }.take(2)
+            ).distinctBy { it.voice.name }
         options.clear()
-        options += ranked.take(limit).mapIndexed { index, candidate ->
+        options += visible.mapIndexed { index, candidate ->
             VoiceOption(
                 voice = candidate.voice,
                 title = "Opción ${index + 1} · ${localeTitle(candidate.voice.locale)}",
@@ -154,6 +160,24 @@ class VoiceLabActivity : ComponentActivity() {
         }
         error = if (options.isEmpty()) "No encontré voces instaladas que pasen el filtro." else null
         ready = true
+    }
+
+    private fun installVoiceData() {
+        tts?.stop()
+        val enginePackage = tts?.defaultEngine
+        val installer = Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA).apply {
+            if (!enginePackage.isNullOrBlank()) setPackage(enginePackage)
+        }
+        val genericInstaller = Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA)
+        val settings = Intent("com.android.settings.TTS_SETTINGS")
+        val target = listOf(installer, genericInstaller, settings).firstOrNull { candidate ->
+            candidate.resolveActivity(packageManager) != null
+        }
+        if (target == null) {
+            error = "Este teléfono no ofrece una pantalla para descargar voces TTS."
+        } else {
+            startActivity(target)
+        }
     }
 
     private fun voiceFamily(name: String): String = name
@@ -227,6 +251,7 @@ private fun VoiceLabScreen(
     onBack: () -> Unit,
     onPreview: (VoiceOption) -> Unit,
     onSelect: (VoiceOption) -> Unit,
+    onInstallVoices: () -> Unit,
     onReload: () -> Unit
 ) {
     val desiredLabel = if (mode == VoiceMode.MASCULINE) "masculina" else "femenina"
@@ -253,9 +278,15 @@ private fun VoiceLabScreen(
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Talevane muestra como máximo $targetCount opciones: evita duplicados, voces sin instalar y prioriza las que arrancan rápido. No usa cambios de pitch para fingir una voz masculina o femenina.",
+                    "Talevane muestra hasta $targetCount voces instaladas y también las disponibles para descargar. No usa cambios de pitch para fingir una voz masculina o femenina.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(onClick = onInstallVoices, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.Download, null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Descargar más voces en el teléfono")
+                }
                 if (ready && options.isNotEmpty()) {
                     Spacer(Modifier.height(10.dp))
                     Text(
@@ -302,7 +333,9 @@ private fun VoiceLabScreen(
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                         Text(
-                                            if (option.voice.isNetworkConnectionRequired)
+                                            if (option.needsDownload)
+                                                "Disponible para descargar · luego puede funcionar offline"
+                                            else if (option.voice.isNetworkConnectionRequired)
                                                 "Online · puede tardar un poco más en empezar"
                                             else
                                                 "Offline · inicio más rápido",
@@ -316,16 +349,24 @@ private fun VoiceLabScreen(
                                 }
                                 Spacer(Modifier.height(10.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    OutlinedButton(onClick = { onPreview(option) }) {
-                                        Icon(Icons.Default.PlayArrow, null)
-                                        Spacer(Modifier.width(4.dp))
-                                        Text("Probar")
-                                    }
-                                    Button(
-                                        onClick = { onSelect(option) },
-                                        enabled = !selected
-                                    ) {
-                                        Text(if (selected) "Elegida" else "Usar esta voz")
+                                    if (option.needsDownload) {
+                                        Button(onClick = onInstallVoices) {
+                                            Icon(Icons.Default.Download, null)
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("Descargar")
+                                        }
+                                    } else {
+                                        OutlinedButton(onClick = { onPreview(option) }) {
+                                            Icon(Icons.Default.PlayArrow, null)
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("Probar")
+                                        }
+                                        Button(
+                                            onClick = { onSelect(option) },
+                                            enabled = !selected
+                                        ) {
+                                            Text(if (selected) "Elegida" else "Usar esta voz")
+                                        }
                                     }
                                 }
                             }

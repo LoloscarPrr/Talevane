@@ -24,6 +24,7 @@ class AmbientSoundEngine(context: Context) {
 
     private val appContext = context.applicationContext
     private val handler = Handler(Looper.getMainLooper())
+    private val orchestralSound = SampledOrchestraEngine(appContext)
 
     @Volatile private var released = false
     @Volatile private var shouldPlay = false
@@ -36,6 +37,7 @@ class AmbientSoundEngine(context: Context) {
     private var activePlayer: MediaPlayer? = null
     private var fadingPlayer: MediaPlayer? = null
     private var fadeGeneration = 0
+    private var usingOrchestralPack = false
     private val masteringChains = mutableMapOf<MediaPlayer, MasteringChain>()
 
     fun setBookIdentity(bookId: Long, title: String, author: String) {
@@ -45,7 +47,13 @@ class AmbientSoundEngine(context: Context) {
         val next = "$normalizedTitle|$normalizedAuthor".takeIf { it != "|" } ?: "book-$bookId"
         if (next == bookSignature) return
         bookSignature = next
-        if (shouldPlay) handler.post { transitionTo(targetMood) }
+        orchestralSound.setBookIdentity(title, author)
+        if (shouldPlay) handler.post {
+            if (activateOrchestralPack()) {
+                orchestralSound.start(targetMood, targetIntensity, targetVolume)
+            }
+            transitionTo(targetMood)
+        }
     }
 
     fun start(mood: ReadingMood, intensity: Float, volume: Float) {
@@ -54,26 +62,40 @@ class AmbientSoundEngine(context: Context) {
         targetIntensity = intensity.coerceIn(0f, 1f)
         targetVolume = volume.coerceIn(0f, 1f)
         shouldPlay = true
-        handler.post { transitionTo(targetMood) }
+        handler.post {
+            if (activateOrchestralPack()) {
+                orchestralSound.start(targetMood, targetIntensity, targetVolume)
+            }
+            transitionTo(targetMood)
+        }
     }
 
     fun setMood(mood: ReadingMood, intensity: Float) {
         if (released) return
         targetMood = mood
         targetIntensity = intensity.coerceIn(0f, 1f)
-        if (shouldPlay) handler.post { transitionTo(targetMood) }
+        if (shouldPlay) handler.post {
+            if (activateOrchestralPack()) {
+                orchestralSound.setMood(targetMood, targetIntensity)
+            }
+            transitionTo(targetMood)
+        }
     }
 
     fun setVolume(volume: Float) {
         if (released) return
         targetVolume = volume.coerceIn(0f, 1f)
-        handler.post { applyCurrentGain() }
+        handler.post {
+            orchestralSound.setVolume(targetVolume)
+            applyCurrentGain()
+        }
     }
 
     fun pause() {
         shouldPlay = false
         handler.post {
             fadeGeneration++
+            orchestralSound.pause()
             releasePlayer(fadingPlayer)
             fadingPlayer = null
             runCatching { activePlayer?.pause() }
@@ -84,6 +106,9 @@ class AmbientSoundEngine(context: Context) {
         if (released) return
         shouldPlay = true
         handler.post {
+            if (activateOrchestralPack()) {
+                orchestralSound.start(targetMood, targetIntensity, targetVolume)
+            }
             val player = activePlayer
             val expectedKey = playbackKey(targetMood)
             if (player == null || activeKey != expectedKey) {
@@ -102,6 +127,7 @@ class AmbientSoundEngine(context: Context) {
             fadeGeneration++
             releasePlayer(fadingPlayer)
             releasePlayer(activePlayer)
+            orchestralSound.release()
             fadingPlayer = null
             activePlayer = null
             activeKey = null
@@ -111,6 +137,17 @@ class AmbientSoundEngine(context: Context) {
     }
 
     private fun playbackKey(mood: ReadingMood): String = "$bookSignature|${mood.name}"
+
+    private fun activateOrchestralPack(): Boolean {
+        val available = OrchestralPackManager.isInstalled(appContext)
+        if (!available) {
+            if (usingOrchestralPack) orchestralSound.pause()
+            usingOrchestralPack = false
+            return false
+        }
+        usingOrchestralPack = true
+        return true
+    }
 
     private fun transitionTo(mood: ReadingMood) {
         if (released || !shouldPlay) return

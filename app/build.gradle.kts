@@ -15,8 +15,8 @@ android {
         applicationId = "app.talevane.reader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 39
-        versionName = "0.7.10"
+        versionCode = 40
+        versionName = "0.7.11"
     }
 
     if (hasStableKeystore) {
@@ -67,5 +67,6 @@ dependencies {
     implementation("androidx.media:media:1.7.0")
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation("com.google.mlkit:text-recognition:16.0.1")
+    implementation("com.github.junrar:junrar:8.1.0")
     testImplementation("junit:junit:4.13.2")
 }
