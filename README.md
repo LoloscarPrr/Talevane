@@ -1,4 +1,10 @@
-# Talevane v0.7.9
+# Talevane v0.7.10
+
+## v0.7.10 — Real PDF pages and layout-aware reading
+- Preserves source PDF page boundaries, so a 170-page PDF opens as 170 reader pages instead of hundreds of arbitrary text chunks.
+- Sorts PDF text by its visual position and reads two-column contents pages one column at a time.
+- Keeps OCR fallback pages separated as real document pages.
+- Automatically follows the highlighted narration line inside long pages without leaving a clipped line at the top.
 
 ## v0.7.9 — Spanish and English narration
 - Detects Spanish or English locally from each book and selects the matching Android TTS language.
