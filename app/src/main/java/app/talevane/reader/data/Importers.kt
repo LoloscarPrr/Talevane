@@ -132,9 +132,10 @@ object Importers {
             .any { line -> line.lowercase() in contentsHeadings }
         if (!hasContentsHeading) return false
 
+        val lowercaseText = text.lowercase()
         val sectionMarkers = Regex(
-            pattern = """(?i)\b(cap[ií]tulo|chapter|anexos?|appendix)\b"""
-        ).findAll(text).count()
+            pattern = """\b(cap[ií]tulo|chapter|anexos?|appendix)\b"""
+        ).findAll(lowercaseText).count()
         val pageNumbers = Regex(pattern = """\b\d{1,3}\b""")
             .findAll(text)
             .count()
