@@ -124,15 +124,18 @@ object Importers {
     }
 
     internal fun looksLikeTwoColumnContents(text: String): Boolean {
-        val hasContentsHeading = Regex(
-            pattern = """(?im)^\s*(índice|indice|contents|table of contents)\s*$"""
-        ).containsMatchIn(text)
+        val contentsHeadings = setOf("índice", "indice", "contents", "table of contents")
+        val hasContentsHeading = text.lineSequence()
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .take(6)
+            .any { line -> line.lowercase() in contentsHeadings }
         if (!hasContentsHeading) return false
 
         val sectionMarkers = Regex(
             pattern = """(?i)\b(cap[ií]tulo|chapter|anexos?|appendix)\b"""
         ).findAll(text).count()
-        val pageNumbers = Regex(pattern = """(?m)(^|\s)\d{1,3}(?=\s|$)""")
+        val pageNumbers = Regex(pattern = """\b\d{1,3}\b""")
             .findAll(text)
             .count()
 
