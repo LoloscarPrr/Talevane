@@ -92,7 +92,9 @@ internal fun BookFlowPage(
         val margin = (lineBottom - lineTop).coerceAtLeast(1f)
 
         if (lineTop < visibleTop + margin || lineBottom > visibleBottom - margin) {
-            val target = (lineTop - viewportHeightPx * 0.18f)
+            val roughTarget = (lineTop - viewportHeightPx * 0.18f).coerceAtLeast(0f)
+            val alignedTopLine = result.getLineForVerticalPosition(roughTarget)
+            val target = result.getLineTop(alignedTopLine)
                 .roundToInt()
                 .coerceIn(0, scroll.maxValue)
             scroll.animateScrollTo(target)
