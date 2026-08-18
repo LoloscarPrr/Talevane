@@ -119,7 +119,8 @@ class AmbientSoundEngine(context: Context) {
     private fun routePlayback() {
         if (released || !shouldPlay) return
 
-        if (targetMood == ReadingMood.INFORMATIONAL || targetVolume <= 0.001f) {
+        val suppressAdaptiveMusic = targetMood == ReadingMood.NEUTRAL && targetIntensity <= 0.001f
+        if (suppressAdaptiveMusic || targetVolume <= 0.001f) {
             orchestralSound.pause()
             stopLegacyPlayers()
             return
@@ -150,7 +151,7 @@ class AmbientSoundEngine(context: Context) {
     }
 
     private fun transitionTo(mood: ReadingMood) {
-        if (released || !shouldPlay || mood == ReadingMood.INFORMATIONAL) return
+        if (released || !shouldPlay) return
         val nextKey = playbackKey(mood)
         if (activeKey == nextKey && activePlayer != null) {
             applyCurrentGain()
