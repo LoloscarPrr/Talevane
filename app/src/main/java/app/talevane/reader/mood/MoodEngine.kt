@@ -4,7 +4,6 @@ import java.text.Normalizer
 import kotlin.math.roundToInt
 
 enum class ReadingMood(val label: String, val description: String) {
-    INFORMATIONAL("Informativo", "Lectura técnica o educativa sin música automática"),
     NEUTRAL("Neutro", "Sin un tono dominante"),
     CALM("Calma", "Ritmo sereno y contemplativo"),
     REFLECTIVE("Reflexión", "Tono introspectivo e intelectual"),
@@ -72,8 +71,10 @@ object MoodEngine {
     fun analyze(text: String, position: Int, previous: ReadingMood? = null): MoodSnapshot {
         if (text.isBlank()) return MoodSnapshot(ReadingMood.NEUTRAL, 0f, 0f)
 
+        // Informational/technical material intentionally uses NEUTRAL + zero intensity. The audio
+        // engine treats that combination as adaptive-music suppression while narration continues.
         if (isInformationalDocument(text)) {
-            return MoodSnapshot(ReadingMood.INFORMATIONAL, 0f, 0.95f)
+            return MoodSnapshot(ReadingMood.NEUTRAL, 0f, 0.95f)
         }
 
         val safePosition = position.coerceIn(0, text.length)
@@ -96,8 +97,6 @@ object MoodEngine {
             scores[mood] = score
         }
 
-        // Genre is a weak prior, not a hard lock. It helps horror remain horror when
-        // philosophical vocabulary appears inside a supernatural story.
         val introEnd = minOf(text.length, 12_000)
         val intro = normalize(text.substring(0, introEnd))
         val horrorGenre = horrorGenreMarkers.any { marker -> intro.contains(normalize(marker)) }
@@ -135,7 +134,7 @@ object MoodEngine {
         var chosenMood = top.key
         var chosenScore = top.value
 
-        if (previous != null && previous != ReadingMood.NEUTRAL && previous != ReadingMood.INFORMATIONAL) {
+        if (previous != null && previous != ReadingMood.NEUTRAL) {
             val previousScore = scores[previous] ?: 0f
             val tolerance = if (horrorGenre && previous == ReadingMood.REFLECTIVE) 0.35f else 1.0f
             if (previousScore >= top.value - tolerance && previousScore >= 1.5f) {
