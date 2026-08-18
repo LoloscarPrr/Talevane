@@ -15,8 +15,8 @@ android {
         applicationId = "app.talevane.reader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 40
-        versionName = "0.7.11"
+        versionCode = 41
+        versionName = "0.7.12"
     }
 
     if (hasStableKeystore) {
