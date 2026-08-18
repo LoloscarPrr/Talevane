@@ -12,9 +12,8 @@ import kotlin.math.pow
 /**
  * Stable offline adaptive-score playback for Talevane.
  *
- * The score is generated locally from book identity + mood and played by Android's MIDI engine.
- * v0.6.9.2 uses conservative gain staging so the multi-layer score keeps real headroom instead of
- * relying on post-mix loudness processing.
+ * The optional sampled orchestral pack is exclusive: when installed it replaces the legacy MIDI
+ * score instead of layering on top of it. Informational documents intentionally stay silent.
  */
 class AmbientSoundEngine(context: Context) {
     companion object {
@@ -48,12 +47,7 @@ class AmbientSoundEngine(context: Context) {
         if (next == bookSignature) return
         bookSignature = next
         orchestralSound.setBookIdentity(title, author)
-        if (shouldPlay) handler.post {
-            if (activateOrchestralPack()) {
-                orchestralSound.start(targetMood, targetIntensity, targetVolume)
-            }
-            transitionTo(targetMood)
-        }
+        if (shouldPlay) handler.post { routePlayback() }
     }
 
     fun start(mood: ReadingMood, intensity: Float, volume: Float) {
@@ -62,24 +56,14 @@ class AmbientSoundEngine(context: Context) {
         targetIntensity = intensity.coerceIn(0f, 1f)
         targetVolume = volume.coerceIn(0f, 1f)
         shouldPlay = true
-        handler.post {
-            if (activateOrchestralPack()) {
-                orchestralSound.start(targetMood, targetIntensity, targetVolume)
-            }
-            transitionTo(targetMood)
-        }
+        handler.post { routePlayback() }
     }
 
     fun setMood(mood: ReadingMood, intensity: Float) {
         if (released) return
         targetMood = mood
         targetIntensity = intensity.coerceIn(0f, 1f)
-        if (shouldPlay) handler.post {
-            if (activateOrchestralPack()) {
-                orchestralSound.setMood(targetMood, targetIntensity)
-            }
-            transitionTo(targetMood)
-        }
+        if (shouldPlay) handler.post { routePlayback() }
     }
 
     fun setVolume(volume: Float) {
@@ -88,6 +72,12 @@ class AmbientSoundEngine(context: Context) {
         handler.post {
             orchestralSound.setVolume(targetVolume)
             applyCurrentGain()
+            if (targetVolume <= 0.001f) {
+                orchestralSound.pause()
+                pauseLegacyPlayers()
+            } else if (shouldPlay) {
+                routePlayback()
+            }
         }
     }
 
@@ -105,19 +95,7 @@ class AmbientSoundEngine(context: Context) {
     fun resume() {
         if (released) return
         shouldPlay = true
-        handler.post {
-            if (activateOrchestralPack()) {
-                orchestralSound.start(targetMood, targetIntensity, targetVolume)
-            }
-            val player = activePlayer
-            val expectedKey = playbackKey(targetMood)
-            if (player == null || activeKey != expectedKey) {
-                transitionTo(targetMood)
-            } else {
-                applyCurrentGain()
-                runCatching { player.start() }
-            }
-        }
+        handler.post { routePlayback() }
     }
 
     fun release() {
@@ -138,6 +116,28 @@ class AmbientSoundEngine(context: Context) {
 
     private fun playbackKey(mood: ReadingMood): String = "$bookSignature|${mood.name}"
 
+    private fun routePlayback() {
+        if (released || !shouldPlay) return
+
+        if (targetMood == ReadingMood.INFORMATIONAL || targetVolume <= 0.001f) {
+            orchestralSound.pause()
+            stopLegacyPlayers()
+            return
+        }
+
+        if (activateOrchestralPack()) {
+            // The sampled orchestra replaces the MIDI fallback. Never let both buses run together.
+            stopLegacyPlayers()
+            orchestralSound.start(targetMood, targetIntensity, targetVolume)
+            orchestralSound.setMood(targetMood, targetIntensity)
+            orchestralSound.setVolume(targetVolume)
+            return
+        }
+
+        orchestralSound.pause()
+        transitionTo(targetMood)
+    }
+
     private fun activateOrchestralPack(): Boolean {
         val available = OrchestralPackManager.isInstalled(appContext)
         if (!available) {
@@ -150,7 +150,7 @@ class AmbientSoundEngine(context: Context) {
     }
 
     private fun transitionTo(mood: ReadingMood) {
-        if (released || !shouldPlay) return
+        if (released || !shouldPlay || mood == ReadingMood.INFORMATIONAL) return
         val nextKey = playbackKey(mood)
         if (activeKey == nextKey && activePlayer != null) {
             applyCurrentGain()
@@ -244,6 +244,22 @@ class AmbientSoundEngine(context: Context) {
         if (!shouldPlay || targetVolume <= 0.001f) {
             runCatching { activePlayer?.pause() }
         }
+    }
+
+    private fun pauseLegacyPlayers() {
+        fadeGeneration++
+        releasePlayer(fadingPlayer)
+        fadingPlayer = null
+        runCatching { activePlayer?.pause() }
+    }
+
+    private fun stopLegacyPlayers() {
+        fadeGeneration++
+        releasePlayer(fadingPlayer)
+        releasePlayer(activePlayer)
+        fadingPlayer = null
+        activePlayer = null
+        activeKey = null
     }
 
     private fun releasePlayer(player: MediaPlayer?) {
