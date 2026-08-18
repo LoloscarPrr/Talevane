@@ -4,6 +4,7 @@ import java.text.Normalizer
 import kotlin.math.roundToInt
 
 enum class ReadingMood(val label: String, val description: String) {
+    INFORMATIONAL("Informativo", "Lectura técnica o educativa sin música automática"),
     NEUTRAL("Neutro", "Sin un tono dominante"),
     CALM("Calma", "Ritmo sereno y contemplativo"),
     REFLECTIVE("Reflexión", "Tono introspectivo e intelectual"),
@@ -55,8 +56,25 @@ object MoodEngine {
         "cuento de terror", "weird fiction", "cosmic horror"
     )
 
+    private val strongInformationalMarkers = listOf(
+        "manual del conductor", "manual de conduccion", "manual de usuario", "manual de instrucciones",
+        "licencia de conducir", "seguridad vial", "senales de transito", "normas de transito",
+        "reglamento de transito", "codigo de transito", "guia de estudio", "material de estudio",
+        "texto academico", "documento tecnico", "ficha tecnica", "procedimiento operativo"
+    )
+
+    private val informationalStructureMarkers = listOf(
+        "introduccion", "objetivos", "definicion", "procedimiento", "normativa", "reglamento",
+        "instrucciones", "requisitos", "capitulo", "tabla", "figura", "ejemplo", "ejercicio",
+        "bibliografia", "referencias", "anexo", "contenido", "indice"
+    )
+
     fun analyze(text: String, position: Int, previous: ReadingMood? = null): MoodSnapshot {
         if (text.isBlank()) return MoodSnapshot(ReadingMood.NEUTRAL, 0f, 0f)
+
+        if (isInformationalDocument(text)) {
+            return MoodSnapshot(ReadingMood.INFORMATIONAL, 0f, 0.95f)
+        }
 
         val safePosition = position.coerceIn(0, text.length)
         val radius = 2200
@@ -117,7 +135,7 @@ object MoodEngine {
         var chosenMood = top.key
         var chosenScore = top.value
 
-        if (previous != null && previous != ReadingMood.NEUTRAL) {
+        if (previous != null && previous != ReadingMood.NEUTRAL && previous != ReadingMood.INFORMATIONAL) {
             val previousScore = scores[previous] ?: 0f
             val tolerance = if (horrorGenre && previous == ReadingMood.REFLECTIVE) 0.35f else 1.0f
             if (previousScore >= top.value - tolerance && previousScore >= 1.5f) {
@@ -130,6 +148,17 @@ object MoodEngine {
         val intensity = (0.25f + density * 0.13f).coerceIn(0.2f, 1f)
         val confidence = ((chosenScore - second + 1f) / (chosenScore + 2f)).coerceIn(0.25f, 0.95f)
         return MoodSnapshot(chosenMood, intensity, confidence)
+    }
+
+    fun isInformationalDocument(text: String): Boolean {
+        if (text.isBlank()) return false
+        val intro = normalize(text.take(20_000))
+        if (strongInformationalMarkers.any { intro.contains(it) }) return true
+
+        val structureHits = informationalStructureMarkers.count { marker ->
+            Regex("(^|\\s)$marker(\\s|:|\\.|$)").containsMatchIn(intro)
+        }
+        return structureHits >= 4
     }
 
     private fun normalize(value: String): String {
