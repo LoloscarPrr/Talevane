@@ -24,6 +24,12 @@ internal object OrchestralSampleCatalog {
 
     fun familyFor(fileName: String): OrchestralFamily? {
         val name = fileName.lowercase()
+        // Talevane's reading score intentionally avoids bright pitched percussion and synthetic-
+        // sounding keyboard timbres. Even when these are acoustic samples, glockenspiel, celesta
+        // and marimba read as digital notification-like "tin/tun" sounds under narration.
+        if (listOf("glock", "glockenspiel", "celesta", "marimba", "vibraphone", "vibes", "synth", "pluck", "bell", "chime").any(name::contains)) {
+            return null
+        }
         return when {
             listOf("flute", "picc", "oboe", "clar", "bassoon", "woodwind").any(name::contains) ->
                 OrchestralFamily.WOODWINDS
@@ -31,9 +37,9 @@ internal object OrchestralSampleCatalog {
                 OrchestralFamily.BRASS
             listOf("violin", "vln", "viola", "cello", "string", "contrabass").any(name::contains) ->
                 OrchestralFamily.STRINGS
-            listOf("piano", "harp", "glock", "marimba", "celesta", "key").any(name::contains) ->
+            listOf("piano", "harp").any(name::contains) ->
                 OrchestralFamily.KEYS
-            listOf("drum", "timp", "cym", "perc", "snare", "gong", "anvil").any(name::contains) ->
+            listOf("drum", "timp", "cym", "perc", "snare", "gong").any(name::contains) ->
                 OrchestralFamily.PERCUSSION
             else -> null
         }
@@ -80,8 +86,8 @@ internal object OrchestralSampleCatalog {
     private fun samplePenalty(sample: OrchestralSample): Int {
         val name = sample.file.name.lowercase()
         val preferred = when (sample.family) {
-            OrchestralFamily.PERCUSSION -> listOf("hit", "drum", "timp")
-            OrchestralFamily.KEYS -> listOf("piano", "harp", "glock")
+            OrchestralFamily.PERCUSSION -> listOf("timp", "drum", "cym")
+            OrchestralFamily.KEYS -> listOf("piano", "harp")
             else -> listOf("sus", "sustain", "vib", "legato", "stac")
         }
         val articulationPenalty = if (preferred.any(name::contains)) 0 else 1
