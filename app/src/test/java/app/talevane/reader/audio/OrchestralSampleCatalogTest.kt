@@ -1,11 +1,12 @@
 package app.talevane.reader.audio
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class OrchestralSampleCatalogTest {
     @Test
-    fun `classifies the orchestral families used by the VSCO pack`() {
+    fun `classifies the acoustic orchestral families used by the VSCO pack`() {
         assertEquals(
             OrchestralFamily.STRINGS,
             OrchestralSampleCatalog.familyFor("VlnEns_Pizz_C4_v2_rr1.wav")
@@ -20,12 +21,22 @@ class OrchestralSampleCatalogTest {
         )
         assertEquals(
             OrchestralFamily.KEYS,
-            OrchestralSampleCatalog.familyFor("glock_medium_C6.wav")
+            OrchestralSampleCatalog.familyFor("Piano_sus_C4_v1.wav")
         )
         assertEquals(
             OrchestralFamily.PERCUSSION,
             OrchestralSampleCatalog.familyFor("BDrumNewhit_v4_rr1.wav")
         )
+    }
+
+    @Test
+    fun `rejects bright bell like timbres under narration`() {
+        assertNull(OrchestralSampleCatalog.familyFor("glock_medium_C6.wav"))
+        assertNull(OrchestralSampleCatalog.familyFor("celesta_C5.wav"))
+        assertNull(OrchestralSampleCatalog.familyFor("marimba_C4.wav"))
+        assertNull(OrchestralSampleCatalog.familyFor("vibraphone_C4.wav"))
+        assertNull(OrchestralSampleCatalog.familyFor("synth_pluck_C4.wav"))
+        assertNull(OrchestralSampleCatalog.familyFor("bell_chime_C6.wav"))
     }
 
     @Test
