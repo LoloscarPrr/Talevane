@@ -1,6 +1,5 @@
 package app.talevane.reader.ui
 
-import android.net.Uri
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -8,51 +7,30 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import app.talevane.reader.data.BookRepository
+import app.talevane.reader.application.library.BookLibrary
+import app.talevane.reader.presentation.app.AppViewModel
 
 @Composable
 fun TalevaneRoot(
-    repository: BookRepository,
-    incomingBookUri: Uri? = null,
-    onIncomingBookHandled: () -> Unit = {}
+    library: BookLibrary,
+    appViewModel: AppViewModel
 ) {
-    var readerId by rememberSaveable { mutableStateOf<Long?>(null) }
-    var externalImporting by remember { mutableStateOf(false) }
-    var externalImportError by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(incomingBookUri) {
-        val uri = incomingBookUri ?: return@LaunchedEffect
-        externalImporting = true
-        externalImportError = null
-
-        runCatching { repository.import(uri) }
-            .onSuccess { readerId = it }
-            .onFailure {
-                externalImportError = it.message ?: "No se pudo importar el libro."
-            }
-
-        externalImporting = false
-        onIncomingBookHandled()
-    }
+    val state by appViewModel.state.collectAsState()
 
     BookFlowTheme {
         Surface(Modifier.fillMaxSize()) {
-            val activeBookId = readerId
+            val activeBookId = state.activeBookId
             if (activeBookId == null) {
-                LibraryScreen(repository) { readerId = it }
+                LibraryScreen(library, appViewModel::openBook)
             } else {
-                ReaderScreen(repository, activeBookId) { readerId = null }
+                ReaderScreen(library, activeBookId, appViewModel::closeBook)
             }
         }
 
-        if (externalImporting) {
+        if (state.externalImporting) {
             AlertDialog(
                 onDismissRequest = {},
                 confirmButton = {},
@@ -63,11 +41,11 @@ fun TalevaneRoot(
             )
         }
 
-        externalImportError?.let { message ->
+        state.externalImportError?.let { message ->
             AlertDialog(
-                onDismissRequest = { externalImportError = null },
+                onDismissRequest = appViewModel::clearExternalImportError,
                 confirmButton = {
-                    TextButton(onClick = { externalImportError = null }) {
+                    TextButton(onClick = appViewModel::clearExternalImportError) {
                         Text("Entendido")
                     }
                 },

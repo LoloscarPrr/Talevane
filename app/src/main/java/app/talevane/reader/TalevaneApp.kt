@@ -1,13 +1,13 @@
 package app.talevane.reader
 
 import android.app.Application
-import app.talevane.reader.data.BookRepository
+import app.talevane.reader.application.library.BookLibrary
 import app.talevane.reader.data.RoomBookRepository
 import app.talevane.reader.data.TalevaneDatabase
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 
 class TalevaneApp : Application() {
-    lateinit var repository: BookRepository
+    lateinit var repository: BookLibrary
         private set
 
     override fun onCreate() {
