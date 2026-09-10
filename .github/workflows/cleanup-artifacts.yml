@@ -1,10 +1,7 @@
-# Limpieza automática de artifacts antiguos.
-name: Limpiar artifacts antiguos
+name: Limpieza de emergencia de artifacts
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "17 4 * * *"
   push:
     branches: ["main"]
     paths:
@@ -18,17 +15,15 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Eliminar artifacts con más de 3 días
+      - name: Eliminar todos los artifacts actuales
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          CUTOFF="$(date -u -d '3 days ago' +'%Y-%m-%dT%H:%M:%SZ')"
-          echo "Borrando artifacts anteriores a $CUTOFF"
-          IDS="$(gh api --paginate "/repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" --jq ".artifacts[] | select(.created_at < \"$CUTOFF\") | .id")"
+          IDS="$(gh api --paginate "/repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" --jq '.artifacts[].id')"
           if [ -z "$IDS" ]; then
-            echo "No hay artifacts antiguos para borrar."
+            echo "No hay artifacts para borrar."
             exit 0
           fi
           COUNT=0
