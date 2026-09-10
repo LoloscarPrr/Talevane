@@ -1,3 +1,4 @@
+# Limpieza automática de artifacts antiguos.
 name: Limpiar artifacts antiguos
 
 on:
