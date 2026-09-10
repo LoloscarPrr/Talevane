@@ -80,6 +80,7 @@ jobs:
           name: Talevane-v${{ steps.version.outputs.version }}-APK
           path: output/Talevane-v${{ steps.version.outputs.version }}.apk
           if-no-files-found: error
+          retention-days: 3
 
       - name: Publish APK to GitHub Releases
         if: github.event_name != 'pull_request'
