@@ -23,8 +23,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.talevane.reader.R
+import app.talevane.reader.application.library.BookImportRequest
+import app.talevane.reader.application.library.BookLibrary
 import app.talevane.reader.data.BookEntity
-import app.talevane.reader.data.BookRepository
 import app.talevane.reader.data.SupportedBookFiles
 import app.talevane.reader.library.BookPresenter
 import kotlinx.coroutines.launch
@@ -34,8 +35,8 @@ private fun progressOf(book: BookEntity): Float =
     if (book.content.isBlank()) 0f else (book.progressChars.toFloat() / book.content.length).coerceIn(0f, 1f)
 
 @Composable
-internal fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit) {
-    val books by repository.books.collectAsState(initial = emptyList())
+internal fun LibraryScreen(library: BookLibrary, openBook: (Long) -> Unit) {
+    val books by library.books.collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val versionName = remember(context) {
@@ -51,7 +52,9 @@ internal fun LibraryScreen(repository: BookRepository, openBook: (Long) -> Unit)
         if (uri != null) {
             importing = true
             scope.launch {
-                val result = runCatching { repository.import(uri) }
+                val result = runCatching {
+                    library.import(BookImportRequest(uri.toString()))
+                }
                 importing = false
                 result
                     .onSuccess { openBook(it) }
