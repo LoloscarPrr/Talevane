@@ -1,0 +1,63 @@
+name: Talevane - audit verification
+
+on:
+  push:
+    branches: ["audit/00-technical-functional"]
+    paths:
+      - "app/**"
+      - "*.gradle.kts"
+      - "gradle.properties"
+      - ".github/workflows/audit-verification.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-verification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/audit/00-technical-functional'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TALEVANE_KEYSTORE_PATH: ""
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+      - name: Record exact source revision
+        run: |
+          git rev-parse HEAD
+          gradle --version
+      - name: Unit tests and debug build (no release signing)
+        run: gradle --no-daemon --stacktrace --continue :app:testDebugUnitTest :app:assembleDebug
+      - name: Verify debug APK metadata
+        if: success()
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | head -n 5
+      - name: Preserve test results even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-test-reports-${{ github.sha }}
+          path: |
+            app/build/test-results/testDebugUnitTest/
+            app/build/reports/tests/testDebugUnitTest/
+          if-no-files-found: warn
+          retention-days: 14
