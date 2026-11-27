@@ -61,7 +61,8 @@ object Importers {
 
             val usedOcr = !looksLikeReadableBookText(extracted)
             val text = if (usedOcr) {
-                ocrPdf(tmp).trim()
+                // Keep leading/trailing form-feed markers for empty physical pages.
+                ocrPdf(tmp)
             } else {
                 extracted
             }
