@@ -13,9 +13,6 @@ class RoomBookRepository(
 ) : BookLibrary {
     override val books: Flow<List<BookEntity>> = dao.observeAll()
 
-    @Volatile
-    private var recentImportedBook: BookEntity? = null
-
     override suspend fun import(uri: Uri): Long = withContext(Dispatchers.IO) {
         val imported = BookFileImporter.import(context, uri)
         val pending = BookEntity(
@@ -25,15 +22,11 @@ class RoomBookRepository(
             sourceName = imported.sourceName,
             content = imported.content
         )
-        val id = dao.insert(pending)
-        recentImportedBook = pending.copy(id = id)
-        id
+        dao.insert(pending)
     }
 
-    override suspend fun get(id: Long): BookEntity? {
-        recentImportedBook?.takeIf { it.id == id }?.let { return it }
-        return withContext(Dispatchers.IO) { dao.get(id) }
-    }
+    // Room is the source of truth: the narration service also writes directly to its DAO.
+    override suspend fun get(id: Long): BookEntity? = withContext(Dispatchers.IO) { dao.get(id) }
 
     override suspend fun saveProgress(id: Long, position: Int) {
         dao.updateProgress(id, position)
