@@ -17,6 +17,7 @@ android {
         targetSdk = 35
         versionCode = 41
         versionName = "0.7.12"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     if (hasStableKeystore) {
@@ -69,4 +70,6 @@ dependencies {
     implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation("com.github.junrar:junrar:8.1.0")
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }
