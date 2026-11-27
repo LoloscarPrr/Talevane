@@ -44,8 +44,7 @@ class LibraryRegressionTest {
         assertEquals("Contenido de Primero", dao.get(first)?.content)
     }
 
-    // A00-04: this is a desired-behavior regression, expected to fail on the
-    // audited implementation if the cached entity is returned after a write.
+    // A00-04: the repository must return the latest persisted entity.
     @Test
     fun importedBookReflectsProgressAndBookmarkAfterWrites() = runBlocking {
         val file = File.createTempFile("regression-", ".txt", context.cacheDir)
@@ -61,6 +60,9 @@ class LibraryRegressionTest {
             repository.toggleBookmark(afterProgress)
             assertEquals(true, repository.get(id)?.bookmarked)
             assertEquals(imported.content, repository.get(id)?.content)
+            // NarrationService writes directly to the DAO, not through the repository.
+            db.bookDao().updateProgress(id, 20)
+            assertEquals(20, repository.get(id)?.progressChars)
         } finally {
             file.delete()
         }
