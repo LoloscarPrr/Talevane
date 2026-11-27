@@ -11,8 +11,8 @@ const val DOCUMENT_PAGE_SEPARATOR: String = "\n\u000C\n"
 
 object ReadingChunker {
     fun chunk(content: String, maxChars: Int = 2400): List<ReadingChunk> {
-        if (content.isBlank()) return emptyList()
         if (DOCUMENT_PAGE_BREAK in content) return chunkDocumentPages(content)
+        if (content.isBlank()) return emptyList()
 
         val result = ArrayList<ReadingChunk>(content.length / maxChars + 2)
         var start = 0
@@ -58,8 +58,12 @@ object ReadingChunker {
             while (visibleEnd > visibleStart && content[visibleEnd - 1] in lineBreaks) visibleEnd--
             val pageText = content.substring(visibleStart, visibleEnd)
 
-            if (pageText.isNotBlank()) {
-                result += ReadingChunk(start = visibleStart, end = visibleEnd, text = pageText)
+            // A physical PDF page still exists when it has no readable text.
+            // Keep a zero-length anchor at its original source position for navigation.
+            result += if (pageText.isBlank()) {
+                ReadingChunk(start = visibleStart, end = visibleStart, text = "")
+            } else {
+                ReadingChunk(start = visibleStart, end = visibleEnd, text = pageText)
             }
 
             if (separator < 0) break
@@ -82,6 +86,7 @@ object ReadingChunker {
             val mid = (low + high) ushr 1
             val chunk = chunks[mid]
             when {
+                target == chunk.start -> return mid
                 target < chunk.start -> high = mid - 1
                 target >= chunk.end -> {
                     best = mid
